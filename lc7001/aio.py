@@ -27,11 +27,11 @@ class _Session(abc.ABC):  # pylint: disable=too-few-public-methods
     TIMEOUT: Final = 60.0
 
     @classmethod
-    async def factory(
+    def factory(
         cls, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT
     ):
-        """Return an asyncio.run'able _SessionFactory for this class of _Session."""
-        return await _SessionFactory(host, port, timeout, cls).main()
+        """Return a _SessionFactory for this class of _Session."""
+        return _SessionFactory(host, port, timeout, cls)
 
     @abc.abstractmethod
     async def main(self):
@@ -41,7 +41,7 @@ class _Session(abc.ABC):  # pylint: disable=too-few-public-methods
 class _SessionFactory:  # pylint: disable=too-few-public-methods
     """Construct a session for each connection, find current with session()."""
 
-    def session(self):
+    def current(self):
         """Return the current session, perhaps None."""
         return self._session
 

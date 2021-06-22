@@ -39,7 +39,7 @@ class _Session(abc.ABC):  # pylint: disable=too-few-public-methods
 
 
 class _SessionFactory:  # pylint: disable=too-few-public-methods
-    """Construct a session for each connection."""
+    """Construct a session for each connection, find current with session()."""
 
     def session(self):
         """Return the current session, perhaps None."""
@@ -243,7 +243,7 @@ class Consumer(_Sender):
     SECURITY_OK: Final = "[OK]"
     SECURITY_SETKEY: Final = "[SETKEY]"
 
-    # SECURITY_HELLO key
+    # SECURITY_HELLO key, MAC message
     MAC: Final = "MAC"
 
     # ZONE PROPERTY_LIST keys
@@ -412,7 +412,8 @@ class Emitter(Consumer, _EventEmitter):
     EVENT_SECURITY_OK: Final = Consumer.SECURITY_OK
     EVENT_SECURITY_SETKEY: Final = Consumer.SECURITY_SETKEY
 
-    # events emitted with Mapping read
+    # events emitted with message
+    EVENT_MAC: Final = Consumer.MAC
     EVENT_BROADCAST: Final = f"{Consumer._ID}:0"
     EVENT_DELETE_ZONE: Final = f"{Consumer.SERVICE}:{Consumer.DELETE_ZONE}"
     EVENT_LIST_SCENES: Final = f"{Consumer.SERVICE}:{Consumer.LIST_SCENES}"
@@ -466,6 +467,8 @@ class Emitter(Consumer, _EventEmitter):
         if self.SERVICE in message:
             _service = message[self.SERVICE]
             await self._emit(f"{self.SERVICE}:{_service}", message)
+        elif self.MAC in message:
+            await self._emit(self.EVENT_MAC, message)
 
     async def consume_security_setkey(self, message: dict[str]):
         await self._emit(self.EVENT_SECURITY_SETKEY, message)

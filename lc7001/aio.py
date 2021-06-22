@@ -12,7 +12,7 @@ import asyncio
 import collections
 import json
 import logging
-from typing import Final, Optional, Type
+from typing import Final, Type
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
@@ -41,13 +41,17 @@ class _Session(abc.ABC):  # pylint: disable=too-few-public-methods
 class _SessionFactory:  # pylint: disable=too-few-public-methods
     """Construct a session for each connection."""
 
+    def session(self):
+        """Return the current session, perhaps None."""
+        return self._session
+
     async def main(self):
         """Return an asyncio.run'able coroutine object."""
 
         while True:
             try:
                 reader, writer = await asyncio.open_connection(self._host, self._port)
-                session = self._session(writer, reader)
+                self._session = self._type(writer, reader)
             except asyncio.TimeoutError:
                 _logger.error("except asyncio.TimeoutError")
             except OSError as error:
@@ -59,12 +63,13 @@ class _SessionFactory:  # pylint: disable=too-few-public-methods
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except OSError as error:
+                    except OSError:
                         # if session failed with ECONNRESET, so would this
                         pass
 
                 try:
-                    await session.main()
+                    await self._session.main()
+                    self._session = None
                 except EOFError:
                     _logger.error("except EOFError")
                 except OSError as error:
@@ -77,11 +82,12 @@ class _SessionFactory:  # pylint: disable=too-few-public-methods
                     _logger.error("except asyncio.TimeoutError")
                 await close(writer)
 
-    def __init__(self, host: str, port: int, timeout: float, session: Type[_Session]):
+    def __init__(self, host: str, port: int, timeout: float, _type: Type[_Session]):
         self._host = host
         self._port = port
         self._timeout = timeout
-        self._session = session
+        self._type = _type
+        self._session = None
 
 
 class _Sender(_Session):  # pylint: disable=too-few-public-methods
@@ -160,12 +166,14 @@ class _Sender(_Session):  # pylint: disable=too-few-public-methods
     TRIGGER_RAMP_COMMAND: Final = "TriggerRampCommand"
     TRIGGER_RAMP_ALL_COMMAND: Final = "TriggerRampAllCommand"
 
-    def _hash(self, data: bytes) -> bytes:
+    @staticmethod
+    def _hash(data: bytes) -> bytes:
         digest = hashes.Hash(hashes.MD5())
         digest.update(data)
         return digest.finalize()
 
-    def _encrypt(self, key: bytes, data: bytes) -> bytes:
+    @staticmethod
+    def _encrypt(key: bytes, data: bytes) -> bytes:
         cipher = Cipher(algorithms.AES(key), modes.ECB())
         encryptor = cipher.encryptor()
         return encryptor.update(data) + encryptor.finalize()
@@ -263,11 +271,11 @@ class Consumer(_Sender):
 
     async def main(self):
         while True:
-            # null terminated bytes
-            bytes = (
+            # null terminated packet
+            packet = (
                 await asyncio.wait_for(self._reader.readuntil(b"\x00"), self._timeout)
             )[:-1]
-            chars = bytes.decode()
+            chars = packet.decode()
             if chars.startswith(self.SECURITY_SETKEY):
                 # } terminated json encoding
                 encoded = await asyncio.wait_for(
@@ -308,7 +316,7 @@ class Consumer(_Sender):
                 # workaround LC7001 JSON non-compliant bug
                 # that sometimes causes messages to be concatenated.
                 # change JSON encoding to be a list of messages.
-                encoded = b"[" + bytes.replace(b"}{", b"},{") + b"]"
+                encoded = b"[" + packet.replace(b"}{", b"},{") + b"]"
                 try:
                     decoded = json.loads(encoded)
                 except json.JSONDecodeError as error:

@@ -27,9 +27,7 @@ class _Session(abc.ABC):  # pylint: disable=too-few-public-methods
     TIMEOUT: Final = 60.0
 
     @classmethod
-    def factory(
-        cls, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT
-    ):
+    def factory(cls, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT):
         """Return a _SessionFactory for this class of _Session."""
         return _SessionFactory(host, port, timeout, cls)
 
@@ -214,7 +212,7 @@ class _Sender(_Session):  # pylint: disable=too-few-public-methods
         """Compose a LIST_ZONES message."""
         return {self.SERVICE: self.LIST_ZONES}
 
-    def compose_report_scene_properties(self, sid):
+    def compose_report_scene_properties(self, sid: int):
         """Compose a REPORT_SCENE_PROPERTIES message."""
         return {self.SERVICE: self.REPORT_SCENE_PROPERTIES, self.SID: sid}
 
@@ -222,9 +220,26 @@ class _Sender(_Session):  # pylint: disable=too-few-public-methods
         """Compose a REPORT_SYSTEM_PROPERTIES message."""
         return {self.SERVICE: self.REPORT_SYSTEM_PROPERTIES}
 
-    def compose_report_zone_properties(self, zid):
+    def compose_report_zone_properties(self, zid: int):
         """Compose a REPORT_ZONE_PROPERTIES message."""
         return {self.SERVICE: self.REPORT_ZONE_PROPERTIES, self.ZID: zid}
+
+    def compose_set_zone_properties(
+        self, zid: int, name: str = None, power: bool = None, power_level: int = None
+    ):
+        """Compose a SET_ZONE_PROPERTIES message."""
+        property_list = {}
+        if name is not None:
+            property_list[self.NAME] = name
+        if power is not None:
+            property_list[self.POWER] = power
+        if power_level is not None:
+            property_list[self.POWER_LEVEL] = power_level
+        return {
+            self.SERVICE: self.SET_ZONE_PROPERTIES,
+            self.ZID: zid,
+            self.PROPERTY_LIST: property_list,
+        }
 
     def __init__(self, writer: asyncio.StreamWriter):
         self._writer = writer

@@ -192,7 +192,7 @@ class _Sender(_Session):  # pylint: disable=too-few-public-methods
         writer = self._writer
         writer.write(json.dumps(message).encode())
         writer.write(b"\x00")
-        writer.drain()
+        await writer.drain()
         _logger.debug("\t< %s", message)
 
     def compose_keys(self, old: bytes, new: bytes):
@@ -256,8 +256,8 @@ class Consumer(_Sender):
 
     # Security message prefixes
     SECURITY_HELLO: Final = "Hello V1 "
-    SECURITY_INVALID: Final = "[INVALID]"
-    SECURITY_OK: Final = "[OK]"
+    SECURITY_HELLO_INVALID: Final = "[INVALID]"
+    SECURITY_HELLO_OK: Final = "[OK]"
     SECURITY_SETKEY: Final = "[SETKEY]"
 
     # SECURITY_HELLO key, MAC message
@@ -279,21 +279,27 @@ class Consumer(_Sender):
         """Consume a SECURITY_HELLO message."""
 
     @abc.abstractmethod
-    async def consume_security_ok(self):
-        """Consume a SECURITY_OK message from successful SECURITY_HELLO challenge response."""
+    async def consume_security_hello_response(self, success: bool):
+        """Consume SECURITY_OK (True) or SECURITY_INVALID (False) message from challenge response."""
 
-    @abc.abstractmethod
-    async def consume_security_invalid(self):
-        """Consume a SECURITY_OK message from failed SECURITY_HELLO challenge response."""
+    class _Frames(collections.abc.AsyncIterator):
+        def __init__(self, reader: asyncio.StreamReader, timeout):
+            self._reader = reader
+            self._timeout = timeout
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return (
+                await asyncio.wait_for(self._reader.readuntil(b"\x00"), self._timeout)
+            )[:-1]
 
     async def main(self):
         reader = self._reader
-        while True:
-            # null terminated packet
-            packet = (await asyncio.wait_for(reader.readuntil(b"\x00"), self._timeout))[
-                :-1
-            ]
-            chars = packet.decode()
+        frames = self._Frames(reader, self._timeout)
+        async for frame in frames:
+            chars = frame.decode()
             if chars.startswith(self.SECURITY_SETKEY):
                 # } terminated json encoding
                 encoded = await asyncio.wait_for(reader.readuntil(b"}"), self._timeout)
@@ -320,25 +326,33 @@ class Consumer(_Sender):
                     address.decode(),
                 )
                 await self.consume_security_hello(challenge, address)
-            elif chars.startswith(self.SECURITY_OK):
-                _logger.debug("\t> %s", self.SECURITY_OK)
-                await self.consume_security_ok()
-            elif chars.startswith(self.SECURITY_INVALID):
-                _logger.debug("\t> %s", self.SECURITY_INVALID)
-                await self.consume_security_invalid()
+            elif chars.startswith(self.SECURITY_HELLO_OK):
+                _logger.debug("\t> %s", self.SECURITY_HELLO_OK)
+                await self.consume_security_hello_response(True)
+            elif chars.startswith(self.SECURITY_HELLO_INVALID):
+                _logger.debug("\t> %s", self.SECURITY_HELLO_INVALID)
+                await self.consume_security_hello_response(False)
             else:
-                # workaround LC7001 JSON non-compliant bug
-                # that sometimes causes messages to be concatenated.
-                # change JSON encoding to be a list of messages.
-                encoded = b"[" + packet.replace(b"}{", b"},{") + b"]"
                 try:
-                    decoded = json.loads(encoded)
+                    message = json.loads(frame)
                 except json.JSONDecodeError as error:
-                    _logger.error("except json.JSONDecodeError: %s %s", error, encoded)
+                    # workaround LC7001 JSON non-compliant bug
+                    # where multiple messages are concatenated in one frame.
+                    # change JSON encoding to be a list of messages.
+                    encoded = b"[" + frame.replace(b"}{", b"},{") + b"]"
+                    try:
+                        messages = json.loads(encoded)
+                    except json.JSONDecodeError as error:
+                        _logger.error(
+                            "except json.JSONDecodeError: %s %s", error, encoded
+                        )
+                    else:
+                        for message in messages:
+                            _logger.debug("\t> %s", message)
+                            await self.consume(message)
                 else:
-                    for message in decoded:
-                        _logger.debug("\t> %s", message)
-                        await self.consume(message)
+                    _logger.debug("\t> %s", message)
+                    self.consume(message)
 
     def __init__(
         self,
@@ -422,8 +436,7 @@ class Emitter(Consumer, _EventEmitter):
 
     # events emitted with security messages
     EVENT_SECURITY_HELLO: Final = Consumer.SECURITY_HELLO
-    EVENT_SECURITY_INVALID: Final = Consumer.SECURITY_INVALID
-    EVENT_SECURITY_OK: Final = Consumer.SECURITY_OK
+    EVENT_SECURITY_HELLO_RESPONSE: Final = "SECURITY_HELLO_RESPONSE"
     EVENT_SECURITY_SETKEY: Final = Consumer.SECURITY_SETKEY
 
     # events emitted with message
@@ -490,11 +503,8 @@ class Emitter(Consumer, _EventEmitter):
     async def consume_security_hello(self, challenge: bytes, address: bytes):
         await self._emit(self.EVENT_SECURITY_HELLO, challenge, address)
 
-    async def consume_security_ok(self):
-        await self._emit(self.EVENT_SECURITY_OK)
-
-    async def consume_security_invalid(self):
-        await self._emit(self.EVENT_SECURITY_INVALID)
+    async def consume_security_hello_response(self, success: bool):
+        await self._emit(self.EVENT_SECURITY_HELLO_RESPONSE, success)
 
     async def handle_send(self, handler: collections.abc.Awaitable, message: dict[str]):
         """Handle the response from send(message)."""

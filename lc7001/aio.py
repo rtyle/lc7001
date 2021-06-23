@@ -10,6 +10,7 @@ https://developer.legrand.com/documentation/rflc-api-for-lc7001/
 import abc
 import asyncio
 import collections
+import contextlib
 import json
 import logging
 from typing import Final, Type
@@ -18,6 +19,25 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 
 _logger: Final = logging.getLogger(__name__)
+
+
+class _ConnectionContext(contextlib.AbstractAsyncContextManager):
+    def __init__(self, host: str, port: int):
+        self._host = host
+        self._port = port
+        self._writer = None
+
+    async def __aenter__(self):
+        reader, self._writer = await asyncio.open_connection(self._host, self._port)
+        return (reader, self._writer)
+
+    async def __aexit__(self, et, ev, tb):
+        if self._writer is not None:
+            self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except OSError:
+                pass
 
 
 class _Session(abc.ABC):  # pylint: disable=too-few-public-methods
@@ -45,40 +65,20 @@ class _SessionFactory:  # pylint: disable=too-few-public-methods
 
     async def main(self):
         """Return an asyncio.run'able coroutine object."""
-
         while True:
             try:
-                reader, writer = await asyncio.open_connection(self._host, self._port)
-                self._session = self._type(writer, reader)
-            except asyncio.TimeoutError:
-                _logger.error("except asyncio.TimeoutError")
-            except OSError as error:
-                _logger.error("except OSError: %s", error)
-                await asyncio.sleep(self._timeout)
-            else:
-
-                async def close(writer: asyncio.StreamWriter):
-                    writer.close()
-                    try:
-                        await writer.wait_closed()
-                    except OSError:
-                        # if session failed with ECONNRESET, so would this
-                        pass
-
-                try:
+                async with _ConnectionContext(self._host, self._port) as connection:
+                    reader, writer = connection
+                    self._session = self._type(writer, reader)
                     await self._session.main()
-                    self._session = None
-                except EOFError:
-                    _logger.error("except EOFError")
-                except OSError as error:
-                    _logger.error("except OSError: %s", error)
-                except asyncio.CancelledError:
-                    _logger.error("except asyncio.CancelledError")
-                    await close(writer)
-                    raise
-                except asyncio.TimeoutError:
-                    _logger.error("except asyncio.TimeoutError")
-                await close(writer)
+            except EOFError as error:
+                _logger.error("EOFError")
+            except OSError as error:
+                _logger.error("OSError %s", error)
+            except asyncio.TimeoutError:
+                _logger.error("asyncio.TimeoutError")
+            self._session = None
+            await asyncio.sleep(self._timeout)
 
     def __init__(self, host: str, port: int, timeout: float, _type: Type[_Session]):
         self._host = host
@@ -179,8 +179,9 @@ class _Sender(_Session):  # pylint: disable=too-few-public-methods
     async def send_challenge_response(self, key: bytes, challenge: bytes):
         """Send a challenge response (the AES(key) encryption of challenge)."""
         message = self._encrypt(key, challenge).hex()
-        self._writer.write(message.encode())
-        await self._writer.drain()
+        writer = self._writer
+        writer.write(message.encode())
+        await writer.drain()
         _logger.debug("\t< %s", message)
 
     async def send(self, message: dict[str]):
@@ -188,9 +189,10 @@ class _Sender(_Session):  # pylint: disable=too-few-public-methods
         _id = self._id + 1
         message[self._ID] = _id
         self._id = _id
-        self._writer.write(json.dumps(message).encode())
-        self._writer.write(b"\x00")
-        await self._writer.drain()
+        writer = self._writer
+        writer.write(json.dumps(message).encode())
+        writer.write(b"\x00")
+        writer.drain()
         _logger.debug("\t< %s", message)
 
     def compose_keys(self, old: bytes, new: bytes):
@@ -285,17 +287,16 @@ class Consumer(_Sender):
         """Consume a SECURITY_OK message from failed SECURITY_HELLO challenge response."""
 
     async def main(self):
+        reader = self._reader
         while True:
             # null terminated packet
-            packet = (
-                await asyncio.wait_for(self._reader.readuntil(b"\x00"), self._timeout)
-            )[:-1]
+            packet = (await asyncio.wait_for(reader.readuntil(b"\x00"), self._timeout))[
+                :-1
+            ]
             chars = packet.decode()
             if chars.startswith(self.SECURITY_SETKEY):
                 # } terminated json encoding
-                encoded = await asyncio.wait_for(
-                    self._reader.readuntil(b"}"), self._timeout
-                )
+                encoded = await asyncio.wait_for(reader.readuntil(b"}"), self._timeout)
                 try:
                     message = json.loads(encoded)
                 except json.JSONDecodeError as error:
@@ -308,12 +309,10 @@ class Consumer(_Sender):
             elif chars.startswith(self.SECURITY_HELLO):
                 # space terminated challenge phrase
                 challenge = (
-                    await asyncio.wait_for(self._reader.readuntil(b" "), self._timeout)
+                    await asyncio.wait_for(reader.readuntil(b" "), self._timeout)
                 )[:-1]
                 # 12 byte MAC address
-                address = await asyncio.wait_for(
-                    self._reader.readexactly(12), self._timeout
-                )
+                address = await asyncio.wait_for(reader.readexactly(12), self._timeout)
                 _logger.debug(
                     "\t> %s %s %s",
                     self.SECURITY_HELLO,

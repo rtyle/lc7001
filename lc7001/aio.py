@@ -352,7 +352,7 @@ class Consumer(_Sender):
                             await self.consume(message)
                 else:
                     _logger.debug("\t> %s", message)
-                    self.consume(message)
+                    await self.consume(message)
 
     def __init__(
         self,

@@ -41,13 +41,17 @@ class _ConnectionContext(contextlib.AbstractAsyncContextManager):
 
 
 class Session:  # pylint: disable=too-few-public-methods
+    """Connection successful session."""
+
     # default arguments
     HOST: Final = "LCM1.local"
     PORT: Final = 2112
     TIMEOUT: Final = 60.0
 
     @classmethod
-    def repeater(cls, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT, *args):
+    def repeater(
+        cls, *args, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT
+    ):
         """return _SessionRepeater(host, port, timeout, cls), for this cls of Session."""
         return _SessionRepeater(host, port, timeout, cls, args)
 
@@ -55,7 +59,7 @@ class Session:  # pylint: disable=too-few-public-methods
         """Connection successful!"""
         return True
 
-    def __init__(self, reader, writer):
+    def __init__(self, reader, writer, *args):
         self._reader = reader
         self._writer = writer
 
@@ -83,7 +87,9 @@ class _SessionRepeater:  # pylint: disable=too-few-public-methods
             self._session = None
             await asyncio.sleep(self._timeout)
 
-    def __init__(self, host: str, port: int, timeout: float, _type: Type[Session], args):
+    def __init__(
+        self, host: str, port: int, timeout: float, _type: Type[Session], args
+    ):
         self._host = host
         self._port = port
         self._timeout = timeout
@@ -557,3 +563,71 @@ class Emitter(Consumer, _EventEmitter):
         Consumer.__init__(self, reader, writer, timeout)
         _EventEmitter.__init__(self)
         self._emit_id = 1  # id of next emit
+
+
+class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
+    """An Authenticator session runs for the first/authentication phase only.
+
+    This phase will either end by exception or a (success: bool, address: bytes) result.
+    If the phase ended with a SETKEY response, the StatusError formed from the response
+    will be appended.
+    """
+
+    # even though the API will allow passwords less than 8 characters,
+    # the APP will not
+    PASSWORD: Final = b"........"
+
+    class _Result(StopAsyncIteration):
+        pass
+
+    async def main(self):
+        _logger.debug("> Authenticator.main")
+        _address = None
+        _key = self._hash(self.PASSWORD)
+
+        async def mac(message: dict[str]):
+            _logger.info("%s %s", self.MAC, message)
+            raise self._Result(True, message[self.MAC])
+
+        async def setkey(message: dict[str]):
+            _logger.info("%s %s", self.EVENT_SECURITY_SETKEY, message)
+            _address = message[self.MAC]
+
+            async def handle(message: dict[str]):
+                _logger.info("%s", message)
+                error = self.StatusError(message)
+                raise self._Result(bool(error), _address, error)
+
+            await self.handle_send(handle, self.compose_keys(self._hash(b""), _key))
+
+        async def hello(challenge: bytes, address: bytes):
+            _logger.info("%s %s %s", self.EVENT_SECURITY_HELLO, challenge, address)
+            _address = address
+            await self.send_challenge_response(_key, bytes.fromhex(challenge.decode()))
+
+        async def hello_response(success: bool):
+            _logger.info("%s %s", self.EVENT_SECURITY_HELLO_RESPONSE, success)
+            raise self._Result(success, _address)
+
+        emitter = self
+
+        class _Subscription(contextlib.AbstractAsyncContextManager):
+            async def __aenter__(self):
+                _logger.debug("Authenticator subscribe")
+                emitter.on(emitter.EVENT_MAC, mac)
+                emitter.on(emitter.EVENT_SECURITY_SETKEY, setkey)
+                emitter.on(emitter.EVENT_SECURITY_HELLO, hello)
+                emitter.on(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
+
+            async def __aexit__(self, et, ev, tb):
+                _logger.debug("Authenticator unsubscribe")
+                emitter.off(emitter.EVENT_MAC, mac)
+                emitter.off(emitter.EVENT_SECURITY_SETKEY, setkey)
+                emitter.off(emitter.EVENT_SECURITY_HELLO, hello)
+                emitter.off(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
+
+        async with _Subscription():
+            try:
+                return await super().main()
+            except self._Result as result:
+                return result.args

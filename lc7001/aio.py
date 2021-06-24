@@ -40,24 +40,28 @@ class _ConnectionContext(contextlib.AbstractAsyncContextManager):
                 pass
 
 
-class _Session(abc.ABC):  # pylint: disable=too-few-public-methods
-    # default factory arguments
+class Session:  # pylint: disable=too-few-public-methods
+    # default arguments
     HOST: Final = "LCM1.local"
     PORT: Final = 2112
     TIMEOUT: Final = 60.0
 
     @classmethod
-    def factory(cls, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT):
-        """Return a _SessionFactory for this class of _Session."""
-        return _SessionFactory(host, port, timeout, cls)
+    def repeater(cls, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT, *args):
+        """return _SessionRepeater(host, port, timeout, cls), for this cls of Session."""
+        return _SessionRepeater(host, port, timeout, cls, args)
 
-    @abc.abstractmethod
     async def main(self):
-        """Run the session."""
+        """Connection successful!"""
+        return True
+
+    def __init__(self, reader, writer):
+        self._reader = reader
+        self._writer = writer
 
 
-class _SessionFactory:  # pylint: disable=too-few-public-methods
-    """Construct a session for each connection, find current with session()."""
+class _SessionRepeater:  # pylint: disable=too-few-public-methods
+    """Repeat sessions (for each connection) until first one succeeds."""
 
     def current(self):
         """Return the current session, perhaps None."""
@@ -68,9 +72,8 @@ class _SessionFactory:  # pylint: disable=too-few-public-methods
         while True:
             try:
                 async with _ConnectionContext(self._host, self._port) as connection:
-                    reader, writer = connection
-                    self._session = self._type(writer, reader)
-                    await self._session.main()
+                    self._session = self._type(*connection, *self._args)
+                    return await self._session.main()
             except EOFError as error:
                 _logger.error("EOFError")
             except OSError as error:
@@ -80,15 +83,16 @@ class _SessionFactory:  # pylint: disable=too-few-public-methods
             self._session = None
             await asyncio.sleep(self._timeout)
 
-    def __init__(self, host: str, port: int, timeout: float, _type: Type[_Session]):
+    def __init__(self, host: str, port: int, timeout: float, _type: Type[Session], args):
         self._host = host
         self._port = port
         self._timeout = timeout
         self._type = _type
+        self._args = args
         self._session = None
 
 
-class _Sender(_Session):  # pylint: disable=too-few-public-methods
+class _Sender(Session):  # pylint: disable=too-few-public-methods
 
     # message keys
     APP_CONTEXT_ID: Final = "AppContextId"  # echoed in reply
@@ -243,8 +247,8 @@ class _Sender(_Session):  # pylint: disable=too-few-public-methods
             self.PROPERTY_LIST: property_list,
         }
 
-    def __init__(self, writer: asyncio.StreamWriter):
-        self._writer = writer
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        super().__init__(reader, writer)
         self._id = 0  # id of last send
 
 
@@ -266,6 +270,39 @@ class Consumer(_Sender):
     # ZONE PROPERTY_LIST keys
     DEVICE_TYPE: Final = "DeviceType"  # json_string, DIMMER/, consume only
 
+    class StatusError(ValueError):
+        """StatusError constructed from a message."""
+
+        # message keys
+        ERROR_TEXT: Final = "ErrorText"
+        ERROR_CODE: Final = "ErrorCode"
+        STATUS: Final = "Status"
+
+        # STATUS values
+        STATUS_SUCCESS: Final = "Success"
+        STATUS_ERROR: Final = "Error"
+
+        def __init__(self, message: dict[str]):
+            if self.STATUS in message:
+                self.error = message[self.STATUS] != self.STATUS_SUCCESS
+            else:
+                self.error = True
+            if self.ERROR_TEXT in message:
+                self.error_text = message[self.ERROR_TEXT]
+            if self.ERROR_CODE in message:
+                self.error_code = message[self.ERROR_CODE]
+                super().__init__(self.error_code)
+            else:
+                super().__init__()
+
+        def __bool__(self):
+            return self.error
+
+        def raise_if(self):
+            """Raise self if there was an error."""
+            if self:
+                raise self
+
     @abc.abstractmethod
     async def consume(self, message: dict[str]):
         """Consume a message."""
@@ -280,7 +317,7 @@ class Consumer(_Sender):
 
     @abc.abstractmethod
     async def consume_security_hello_response(self, success: bool):
-        """Consume SECURITY_OK (True) or SECURITY_INVALID (False) message from challenge response."""
+        """Consume SECURITY_OK or SECURITY_INVALID message from challenge response."""
 
     class _Frames(collections.abc.AsyncIterator):
         def __init__(self, reader: asyncio.StreamReader, timeout):
@@ -291,6 +328,7 @@ class Consumer(_Sender):
             return self
 
         async def __anext__(self):
+            # return null terminated frame, without the terminator
             return (
                 await asyncio.wait_for(self._reader.readuntil(b"\x00"), self._timeout)
             )[:-1]
@@ -356,12 +394,11 @@ class Consumer(_Sender):
 
     def __init__(
         self,
-        writer: asyncio.StreamWriter,
         reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
         timeout: float = TIMEOUT,
     ):
-        super().__init__(writer)
-        self._reader = reader
+        super().__init__(reader, writer)
         self._timeout = timeout
 
 
@@ -513,10 +550,10 @@ class Emitter(Consumer, _EventEmitter):
 
     def __init__(
         self,
-        writer: asyncio.StreamWriter,
         reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
         timeout: float = Consumer.TIMEOUT,
     ):
-        Consumer.__init__(self, writer, reader, timeout)
+        Consumer.__init__(self, reader, writer, timeout)
         _EventEmitter.__init__(self)
         self._emit_id = 1  # id of next emit

@@ -59,13 +59,13 @@ class Session:  # pylint: disable=too-few-public-methods
         """Connection successful!"""
         return True
 
-    def __init__(self, reader, writer, *args):
+    def __init__(self, reader, writer):
         self._reader = reader
         self._writer = writer
 
 
 class _SessionRepeater:  # pylint: disable=too-few-public-methods
-    """Repeat sessions (for each connection) until first one succeeds."""
+    """Repeat sessions (for each connection) and return the result of the first successful one."""
 
     def current(self):
         """Return the current session, perhaps None."""
@@ -589,6 +589,15 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             _logger.info("%s %s", self.MAC, message)
             raise self._Result(True, message[self.MAC])
 
+        async def hello(challenge: bytes, address: bytes):
+            _logger.info("%s %s %s", self.EVENT_SECURITY_HELLO, challenge, address)
+            _address = address
+            await self.send_challenge_response(_key, bytes.fromhex(challenge.decode()))
+
+        async def hello_response(success: bool):
+            _logger.info("%s %s", self.EVENT_SECURITY_HELLO_RESPONSE, success)
+            raise self._Result(success, _address)
+
         async def setkey(message: dict[str]):
             _logger.info("%s %s", self.EVENT_SECURITY_SETKEY, message)
             _address = message[self.MAC]
@@ -600,34 +609,25 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
             await self.handle_send(handle, self.compose_keys(self._hash(b""), _key))
 
-        async def hello(challenge: bytes, address: bytes):
-            _logger.info("%s %s %s", self.EVENT_SECURITY_HELLO, challenge, address)
-            _address = address
-            await self.send_challenge_response(_key, bytes.fromhex(challenge.decode()))
-
-        async def hello_response(success: bool):
-            _logger.info("%s %s", self.EVENT_SECURITY_HELLO_RESPONSE, success)
-            raise self._Result(success, _address)
-
         emitter = self
 
         class _Subscription(contextlib.AbstractAsyncContextManager):
             async def __aenter__(self):
                 _logger.debug("Authenticator subscribe")
                 emitter.on(emitter.EVENT_MAC, mac)
-                emitter.on(emitter.EVENT_SECURITY_SETKEY, setkey)
                 emitter.on(emitter.EVENT_SECURITY_HELLO, hello)
                 emitter.on(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
+                emitter.on(emitter.EVENT_SECURITY_SETKEY, setkey)
 
             async def __aexit__(self, et, ev, tb):
                 _logger.debug("Authenticator unsubscribe")
                 emitter.off(emitter.EVENT_MAC, mac)
-                emitter.off(emitter.EVENT_SECURITY_SETKEY, setkey)
                 emitter.off(emitter.EVENT_SECURITY_HELLO, hello)
                 emitter.off(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
+                emitter.off(emitter.EVENT_SECURITY_SETKEY, setkey)
 
         async with _Subscription():
             try:
-                return await super().main()
+                await super().main()
             except self._Result as result:
                 return result.args

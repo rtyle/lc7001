@@ -59,20 +59,20 @@ class Session:  # pylint: disable=too-few-public-methods
         """Connection successful!"""
         return True
 
-    def __init__(self, reader, writer):
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         self._reader = reader
         self._writer = writer
 
 
 class _SessionStreamer:  # pylint: disable=too-few-public-methods
-    """Repeat sessions (for each connection) and return the result of the first successful one."""
+    """Stream sessions (one per connection) and return the result of the first successful one."""
 
-    def current(self):
+    def session(self):
         """Return the current session, perhaps None."""
         return self._session
 
     async def main(self):
-        """Return an asyncio.run'able coroutine object."""
+        """Return the result of the first successful session."""
         while True:
             try:
                 async with _ConnectionContext(self._host, self._port) as connection:
@@ -174,26 +174,6 @@ class _Sender(Session):  # pylint: disable=too-few-public-methods
     TRIGGER_RAMP_COMMAND: Final = "TriggerRampCommand"
     TRIGGER_RAMP_ALL_COMMAND: Final = "TriggerRampAllCommand"
 
-    @staticmethod
-    def _hash(data: bytes) -> bytes:
-        digest = hashes.Hash(hashes.MD5())
-        digest.update(data)
-        return digest.finalize()
-
-    @staticmethod
-    def _encrypt(key: bytes, data: bytes) -> bytes:
-        cipher = Cipher(algorithms.AES(key), modes.ECB())
-        encryptor = cipher.encryptor()
-        return encryptor.update(data) + encryptor.finalize()
-
-    async def send_challenge_response(self, key: bytes, challenge: bytes):
-        """Send a challenge response (the AES(key) encryption of challenge)."""
-        message = self._encrypt(key, challenge).hex()
-        writer = self._writer
-        writer.write(message.encode())
-        await writer.drain()
-        _logger.debug("\t< %s", message)
-
     async def send(self, message: dict[str]):
         """Send a composed message."""
         _id = self._id + 1
@@ -204,17 +184,6 @@ class _Sender(Session):  # pylint: disable=too-few-public-methods
         writer.write(b"\x00")
         await writer.drain()
         _logger.debug("\t< %s", message)
-
-    def compose_keys(self, old: bytes, new: bytes):
-        """Compose a SET_SYSTEM_PROPERTIES message with KEYS made from old and new."""
-        return {
-            self.SERVICE: self.SET_SYSTEM_PROPERTIES,
-            self.PROPERTY_LIST: {
-                self.KEYS: "".join(
-                    [self._encrypt(old, key).hex() for key in (old, new)]
-                )
-            },
-        }
 
     def compose_list_scenes(self):
         """Compose a LIST_SCENES message."""
@@ -264,15 +233,6 @@ class Consumer(_Sender):
     # default constructor values
     TIMEOUT: Final = 60.0
 
-    # Security message prefixes
-    SECURITY_HELLO: Final = "Hello V1 "
-    SECURITY_HELLO_INVALID: Final = "[INVALID]"
-    SECURITY_HELLO_OK: Final = "[OK]"
-    SECURITY_SETKEY: Final = "[SETKEY]"
-
-    # SECURITY_HELLO key, MAC message
-    MAC: Final = "MAC"
-
     # ZONE PROPERTY_LIST keys
     DEVICE_TYPE: Final = "DeviceType"  # json_string, DIMMER/, consume only
 
@@ -313,18 +273,6 @@ class Consumer(_Sender):
     async def consume(self, message: dict[str]):
         """Consume a message."""
 
-    @abc.abstractmethod
-    async def consume_security_setkey(self, message: dict[str]):
-        """Consume a SECURITY_SETKEY message."""
-
-    @abc.abstractmethod
-    async def consume_security_hello(self, challenge: bytes, address: bytes):
-        """Consume a SECURITY_HELLO message."""
-
-    @abc.abstractmethod
-    async def consume_security_hello_response(self, success: bool):
-        """Consume SECURITY_OK or SECURITY_INVALID message from challenge response."""
-
     class _Frames(collections.abc.AsyncIterator):
         def __init__(self, reader: asyncio.StreamReader, timeout):
             self._reader = reader
@@ -339,64 +287,19 @@ class Consumer(_Sender):
                 await asyncio.wait_for(self._reader.readuntil(b"\x00"), self._timeout)
             )[:-1]
 
+    async def unwrap(self, frame: bytes):
+        """Unframe message(s)."""
+        try:
+            message = json.loads(frame)
+        except json.JSONDecodeError as error:
+            _logger.error("except json.JSONDecodeError: %s %s", error, frame)
+        else:
+            await self.consume(message)
+
     async def main(self):
-        reader = self._reader
-        frames = self._Frames(reader, self._timeout)
-        async for frame in frames:
-            chars = frame.decode()
-            if chars.startswith(self.SECURITY_SETKEY):
-                # } terminated json encoding
-                encoded = await asyncio.wait_for(reader.readuntil(b"}"), self._timeout)
-                try:
-                    message = json.loads(encoded)
-                except json.JSONDecodeError as error:
-                    _logger.error(
-                        "except json.JSONDecodeError: %s %s %s", error, chars, encoded
-                    )
-                else:
-                    _logger.debug("\t> %s%s", self.SECURITY_SETKEY, message)
-                    await self.consume_security_setkey(message)
-            elif chars.startswith(self.SECURITY_HELLO):
-                # space terminated challenge phrase
-                challenge = (
-                    await asyncio.wait_for(reader.readuntil(b" "), self._timeout)
-                )[:-1]
-                # 12 byte MAC address
-                address = await asyncio.wait_for(reader.readexactly(12), self._timeout)
-                _logger.debug(
-                    "\t> %s %s %s",
-                    self.SECURITY_HELLO,
-                    challenge.decode(),
-                    address.decode(),
-                )
-                await self.consume_security_hello(challenge, address)
-            elif chars.startswith(self.SECURITY_HELLO_OK):
-                _logger.debug("\t> %s", self.SECURITY_HELLO_OK)
-                await self.consume_security_hello_response(True)
-            elif chars.startswith(self.SECURITY_HELLO_INVALID):
-                _logger.debug("\t> %s", self.SECURITY_HELLO_INVALID)
-                await self.consume_security_hello_response(False)
-            else:
-                try:
-                    message = json.loads(frame)
-                except json.JSONDecodeError as error:
-                    # workaround LC7001 JSON non-compliant bug
-                    # where multiple messages are concatenated in one frame.
-                    # change JSON encoding to be a list of messages.
-                    encoded = b"[" + frame.replace(b"}{", b"},{") + b"]"
-                    try:
-                        messages = json.loads(encoded)
-                    except json.JSONDecodeError as error:
-                        _logger.error(
-                            "except json.JSONDecodeError: %s %s", error, encoded
-                        )
-                    else:
-                        for message in messages:
-                            _logger.debug("\t> %s", message)
-                            await self.consume(message)
-                else:
-                    _logger.debug("\t> %s", message)
-                    await self.consume(message)
+        async for frame in self._frames:
+            _logger.debug("\t> %s", frame.decode())
+            await self.unwrap(frame)
 
     def __init__(
         self,
@@ -406,6 +309,7 @@ class Consumer(_Sender):
     ):
         super().__init__(reader, writer)
         self._timeout = timeout
+        self._frames = self._Frames(reader, timeout)
 
 
 class _Inner:  # pylint: disable=too-few-public-methods
@@ -477,13 +381,7 @@ class _EventEmitter:
 class Emitter(Consumer, _EventEmitter):
     """Emitter is a Consumer and an _EventEmitter of consumed messages."""
 
-    # events emitted with security messages
-    EVENT_SECURITY_HELLO: Final = Consumer.SECURITY_HELLO
-    EVENT_SECURITY_HELLO_RESPONSE: Final = "SECURITY_HELLO_RESPONSE"
-    EVENT_SECURITY_SETKEY: Final = Consumer.SECURITY_SETKEY
-
     # events emitted with message
-    EVENT_MAC: Final = Consumer.MAC
     EVENT_BROADCAST: Final = f"{Consumer._ID}:0"
     EVENT_DELETE_ZONE: Final = f"{Consumer.SERVICE}:{Consumer.DELETE_ZONE}"
     EVENT_LIST_SCENES: Final = f"{Consumer.SERVICE}:{Consumer.LIST_SCENES}"
@@ -537,17 +435,6 @@ class Emitter(Consumer, _EventEmitter):
         if self.SERVICE in message:
             _service = message[self.SERVICE]
             await self._emit(f"{self.SERVICE}:{_service}", message)
-        elif self.MAC in message:
-            await self._emit(self.EVENT_MAC, message)
-
-    async def consume_security_setkey(self, message: dict[str]):
-        await self._emit(self.EVENT_SECURITY_SETKEY, message)
-
-    async def consume_security_hello(self, challenge: bytes, address: bytes):
-        await self._emit(self.EVENT_SECURITY_HELLO, challenge, address)
-
-    async def consume_security_hello_response(self, success: bool):
-        await self._emit(self.EVENT_SECURITY_HELLO_RESPONSE, success)
 
     async def handle_send(self, handler: collections.abc.Awaitable, message: dict[str]):
         """Handle the response from send(message)."""
@@ -573,59 +460,134 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     will be appended.
     """
 
+    # Security message prefixes
+    SECURITY_MAC: Final = b'{"MAC":'
+    SECURITY_HELLO: Final = b"Hello V1 "
+    SECURITY_HELLO_INVALID: Final = b"[INVALID]"
+    SECURITY_HELLO_OK: Final = b"[OK]"
+    SECURITY_SETKEY: Final = b"[SETKEY]"
+
+    # SECURITY_HELLO key
+    MAC: Final = "MAC"
+
     # even though the API will allow passwords less than 8 characters,
     # the APP will not
     PASSWORD: Final = b"........"
 
+    @staticmethod
+    def _hash(data: bytes) -> bytes:
+        digest = hashes.Hash(hashes.MD5())
+        digest.update(data)
+        return digest.finalize()
+
+    @staticmethod
+    def _encrypt(key: bytes, data: bytes) -> bytes:
+        cipher = Cipher(algorithms.AES(key), modes.ECB())
+        encryptor = cipher.encryptor()
+        return encryptor.update(data) + encryptor.finalize()
+
     class _Result(StopAsyncIteration):
         pass
 
-    async def main(self):
-        _logger.debug("> Authenticator.main")
-        _address = None
-        _key = self._hash(self.PASSWORD)
+    async def send_challenge_response(self, key: bytes, challenge: bytes):
+        """Send a challenge response (the AES(key) encryption of challenge)."""
+        message = self._encrypt(key, challenge).hex()
+        writer = self._writer
+        writer.write(message.encode())
+        await writer.drain()
+        _logger.debug("\t< %s", message)
 
-        async def mac(message: dict[str]):
-            _logger.info("%s %s", self.MAC, message)
-            raise self._Result(True, message[self.MAC])
+    def compose_keys(self, old: bytes, new: bytes):
+        """Compose a SET_SYSTEM_PROPERTIES message with KEYS made from old and new."""
+        return {
+            self.SERVICE: self.SET_SYSTEM_PROPERTIES,
+            self.PROPERTY_LIST: {
+                self.KEYS: "".join(
+                    [self._encrypt(old, key).hex() for key in (old, new)]
+                )
+            },
+        }
 
-        async def hello(challenge: bytes, address: bytes):
-            _logger.info("%s %s %s", self.EVENT_SECURITY_HELLO, challenge, address)
-            _address = address
-            await self.send_challenge_response(_key, bytes.fromhex(challenge.decode()))
-
-        async def hello_response(success: bool):
-            _logger.info("%s %s", self.EVENT_SECURITY_HELLO_RESPONSE, success)
-            raise self._Result(success, _address)
-
-        async def setkey(message: dict[str]):
-            _logger.info("%s %s", self.EVENT_SECURITY_SETKEY, message)
-            _address = message[self.MAC]
+    async def _consume_security_setkey(self):
+        """Consume a SECURITY_SETKEY message."""
+        # } terminated json encoding
+        frame = await asyncio.wait_for(self._reader.readuntil(b"}"), self._timeout)
+        try:
+            message = json.loads(frame)
+        except json.JSONDecodeError as error:
+            _logger.error("except json.JSONDecodeError: %s %s", error, frame)
+        else:
+            self._address = message[self.MAC]
 
             async def handle(message: dict[str]):
                 _logger.info("%s", message)
                 error = self.StatusError(message)
-                raise self._Result(bool(error), _address, error)
+                raise self._Result(bool(error), self._address, error)
 
-            await self.handle_send(handle, self.compose_keys(self._hash(b""), _key))
+            await self.handle_send(
+                handle, self.compose_keys(self._hash(b""), self._key)
+            )
 
-        emitter = self
+    async def _consume_security_hello(self):
+        """Consume a SECURITY_HELLO message."""
+        # space terminated challenge phrase
+        challenge = (
+            await asyncio.wait_for(self._reader.readuntil(b" "), self._timeout)
+        )[:-1]
+        _logger.debug("\t>\t%s", challenge.decode())
+        # 12 byte MAC address
+        self._address = await asyncio.wait_for(
+            self._reader.readexactly(12), self._timeout
+        )
+        _logger.debug("\t>\t%s", self._address.decode())
+        await self.send_challenge_response(self._key, bytes.fromhex(challenge.decode()))
 
-        class _Subscription(contextlib.AbstractAsyncContextManager):
-            async def __aenter__(self):
-                emitter.on(emitter.EVENT_MAC, mac)
-                # emitter.on(emitter.EVENT_SECURITY_HELLO, hello)
-                # emitter.on(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
-                # emitter.on(emitter.EVENT_SECURITY_SETKEY, setkey)
+    def _consume_security_hello_response(self, success: bool):
+        """Consume SECURITY_OK/SECURITY_INVALID message from challenge response."""
+        raise self._Result(success, self._address)
 
-            async def __aexit__(self, et, ev, tb):
-                emitter.off(emitter.EVENT_MAC, mac)
-                # emitter.off(emitter.EVENT_SECURITY_HELLO, hello)
-                # emitter.off(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
-                # emitter.off(emitter.EVENT_SECURITY_SETKEY, setkey)
+    def _consume_security_mac(self, message):
+        raise self._Result(True, message[self.MAC])
 
-        async with _Subscription():
+    def _unwrap_security_mac(self, frame):
+        try:
+            message = json.loads(frame)
+            self._consume_security_mac(message)
+        except json.JSONDecodeError as error:
+            # this frame may have another JSON encoded message packed in it. cut ours out.
             try:
-                await super().main()
-            except self._Result as result:
-                return result.args
+                cut = frame[: frame.rindex(b"{")]
+                message = json.loads(cut)
+                self._consume_security_mac(message)
+            except json.JSONDecodeError as error:
+                _logger.error("except json.JSONDecodeError: %s %s", error, cut)
+
+    async def unwrap(self, frame: bytes):
+        if frame.startswith(self.SECURITY_MAC):
+            self._unwrap_security_mac(frame)
+        # elif frame.startswith(self.SECURITY_SETKEY):
+        #     await self._consume_security_setkey()
+        # elif frame.startswith(self.SECURITY_HELLO):
+        #     await self._consume_security_hello()
+        # elif frame.startswith(self.SECURITY_HELLO_OK):
+        #     await self._consume_security_hello_response(True)
+        # elif frame.startswith(self.SECURITY_HELLO_INVALID):
+        #     self._consume_security_hello_response(False)
+        else:
+            await super().unwrap(frame)
+
+    async def main(self):
+        try:
+            await super().main()
+        except self._Result as result:
+            return result.args
+
+    def __init__(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        timeout: float = Consumer.TIMEOUT,
+    ):
+        super().__init__(reader, writer, timeout)
+        self._key = self._hash(self.PASSWORD)
+        self._address = None

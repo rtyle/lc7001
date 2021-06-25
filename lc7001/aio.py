@@ -261,24 +261,18 @@ class Consumer(_Sender):
         STATUS_ERROR: Final = "Error"
 
         def __init__(self, message: dict[str]):
-            if self.STATUS in message:
-                self.error = message[self.STATUS] != self.STATUS_SUCCESS
-            else:
-                self.error = True
-            if self.ERROR_TEXT in message:
-                self.error_text = message[self.ERROR_TEXT]
-            if self.ERROR_CODE in message:
-                self.error_code = message[self.ERROR_CODE]
-                super().__init__(self.error_code)
-            else:
-                super().__init__()
+            super().__init__(
+                message.get(self.STATUS, None) != self.STATUS_SUCCESS,
+                message.get(self.ERROR_CODE, None),
+                message.get(self.ERROR_TEXT, None),
+            )
 
         def __bool__(self):
-            return self.error
+            return bool(self.args[0])
 
         def raise_if(self):
-            """Raise self if there was an error."""
-            if self:
+            """raise self if bool(self)."""
+            if bool(self):
                 raise self
 
     @abc.abstractmethod
@@ -479,15 +473,12 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     SECURITY_HELLO_OK: Final = b"[OK]"
     SECURITY_SETKEY: Final = b"[SETKEY]"
 
-    # SECURITY_HELLO key
+    # SECURITY_MAC and SECURITY_SETKEY key
     MAC: Final = "MAC"
 
-    # even though the API will allow passwords less than 8 characters,
-    # the APP will not
-    PASSWORD: Final = b"........"
-
     @staticmethod
-    def _hash(data: bytes) -> bytes:
+    def hash(data: bytes) -> bytes:
+        """Return a hash from data, suitable for turning a password into an encryption key."""
         digest = hashes.Hash(hashes.MD5())
         digest.update(data)
         return digest.finalize()
@@ -524,6 +515,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         """Consume a SECURITY_SETKEY message."""
         # } terminated json encoding
         frame = await asyncio.wait_for(self._reader.readuntil(b"}"), self._timeout)
+        _logger.debug("\t>\t%s", frame.decode())
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
@@ -534,11 +526,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             async def handle(message: dict[str]):
                 _logger.info("%s", message)
                 error = self.StatusError(message)
-                raise self._Result(bool(error), self._address, error)
+                raise self._Result(not error, self._address, *error.args)
 
-            await self.handle_send(
-                handle, self.compose_keys(self._hash(b""), self._key)
-            )
+            await self.handle_send(handle, self.compose_keys(self.hash(b""), self._key))
 
     async def _consume_security_hello(self):
         """Consume a SECURITY_HELLO message."""
@@ -599,7 +589,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         timeout: float = Consumer.TIMEOUT,
+        key: bytes = b"",
     ):
         super().__init__(reader, writer, timeout)
-        self._key = self._hash(self.PASSWORD)
+        self._key = key
         self._address = None

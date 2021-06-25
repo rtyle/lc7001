@@ -52,8 +52,8 @@ class Session:  # pylint: disable=too-few-public-methods
     def streamer(
         cls, *args, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT
     ):
-        """return _SessionStreamer(host, port, timeout, cls), for this cls of Session."""
-        return _SessionStreamer(host, port, timeout, cls, args)
+        """return _SessionStreamer(host, port, timeout, cls, *args), for this cls of Session."""
+        return _SessionStreamer(host, port, timeout, cls, *args)
 
     async def main(self):
         """Connection successful!"""
@@ -65,30 +65,42 @@ class Session:  # pylint: disable=too-few-public-methods
 
 
 class _SessionStreamer:  # pylint: disable=too-few-public-methods
-    """Stream sessions (one per connection) and return the result of the first successful one."""
+    """Stream sessions (one per connection)."""
 
     def session(self):
         """Return the current session, perhaps None."""
         return self._session
 
     async def main(self):
-        """Return the result of the first successful session."""
+        """Return the result of the first successful session.
+
+        Return False if connection could not be made and timeout < 0;
+        otherwise, return the result of the first successful session.
+        Session.streamer(timeout = -1) can be used to test connectability."""
         while True:
             try:
                 async with _ConnectionContext(self._host, self._port) as connection:
-                    self._session = self._type(*connection, *self._args)
-                    return await self._session.main()
-            except EOFError as error:
-                _logger.error("EOFError")
+                    # connection success
+                    try:
+                        self._session = self._type(*connection, *self._args)
+                        return await self._session.main()
+                    except EOFError as error:
+                        _logger.error("EOFError")
+                    except OSError as error:
+                        _logger.error("OSError %s", error)
+                    except asyncio.TimeoutError:
+                        _logger.error("asyncio.TimeoutError")
+                    finally:
+                        self._session = None
             except OSError as error:
+                # connection error
                 _logger.error("OSError %s", error)
-            except asyncio.TimeoutError:
-                _logger.error("asyncio.TimeoutError")
-            self._session = None
-            await asyncio.sleep(self._timeout)
+                if self._timeout < 0:
+                    return False
+                await asyncio.sleep(self._timeout)
 
     def __init__(
-        self, host: str, port: int, timeout: float, _type: Type[Session], args
+        self, host: str, port: int, timeout: float, _type: Type[Session], *args
     ):
         self._host = host
         self._port = port

@@ -157,9 +157,6 @@ class _Sender(Session):  # pylint: disable=too-few-public-methods
     RR: Final = "RR"  # json_integer, 1-100 (RAMP_RATE)
     ST: Final = "St"  # json_boolean, True/False (state toggle?)
 
-    # SYSTEM PROPERTY_LIST keys
-    KEYS: Final = "Keys"
-
     # ZONE PROPERTY_LIST keys
     DEVICE_TYPE: Final = "DeviceType"  # json_string, DIMMER/, reported only
     POWER: Final = "Power"  # json_boolean, True/False
@@ -294,7 +291,7 @@ class Consumer(_Sender):
             )[:-1]
 
     async def unwrap(self, frame: bytes):
-        """Unframe message(s)."""
+        """Unwrap message(s) to consume."""
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
@@ -333,7 +330,7 @@ class _EventEmitter:
     """_EventEmitter pattern implementation."""
 
     class _Once(_Inner):  # pylint: disable=too-few-public-methods
-        """_Once is an _Inner class of _EventEmitter that forward an emission once."""
+        """_Once is an _Inner class of _EventEmitter that forwards an emission once."""
 
         async def _forward(self, *event):
             self.outer().off(self._name, self._forward)
@@ -443,7 +440,7 @@ class Emitter(Consumer, _EventEmitter):
             await self._emit(f"{self.SERVICE}:{_service}", message)
 
     async def handle_send(self, handler: collections.abc.Awaitable, message: dict[str]):
-        """Handle the response from send(message)."""
+        """Handle the response from the message we will send."""
         self.once(f"{self._ID}:{self._id + 1}", handler)
         await self.send(message)
 
@@ -462,7 +459,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     """An Authenticator session runs for the first/authentication phase only.
 
     This phase will either end by exception or a (success: bool, address: bytes) result.
-    If the phase ended with a SETKEY response, the StatusError formed from the response
+    If the phase ended with a SETKEY response, the StatusError.args formed from the response
     will be appended.
     """
 
@@ -472,6 +469,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     SECURITY_HELLO_INVALID: Final = b"[INVALID]"
     SECURITY_HELLO_OK: Final = b"[OK]"
     SECURITY_SETKEY: Final = b"[SETKEY]"
+
+    # SYSTEM PROPERTY_LIST keys
+    KEYS: Final = "Keys"
 
     # SECURITY_MAC and SECURITY_SETKEY key
     MAC: Final = "MAC"

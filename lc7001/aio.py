@@ -41,7 +41,7 @@ class _ConnectionContext(contextlib.AbstractAsyncContextManager):
 
 
 class Session:  # pylint: disable=too-few-public-methods
-    """Connection successful session."""
+    """Empty successful session."""
 
     # default arguments
     HOST: Final = "LCM1.local"
@@ -49,11 +49,11 @@ class Session:  # pylint: disable=too-few-public-methods
     TIMEOUT: Final = 60.0
 
     @classmethod
-    def repeater(
+    def streamer(
         cls, *args, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT
     ):
-        """return _SessionRepeater(host, port, timeout, cls), for this cls of Session."""
-        return _SessionRepeater(host, port, timeout, cls, args)
+        """return _SessionStreamer(host, port, timeout, cls), for this cls of Session."""
+        return _SessionStreamer(host, port, timeout, cls, args)
 
     async def main(self):
         """Connection successful!"""
@@ -64,7 +64,7 @@ class Session:  # pylint: disable=too-few-public-methods
         self._writer = writer
 
 
-class _SessionRepeater:  # pylint: disable=too-few-public-methods
+class _SessionStreamer:  # pylint: disable=too-few-public-methods
     """Repeat sessions (for each connection) and return the result of the first successful one."""
 
     def current(self):
@@ -613,18 +613,16 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
         class _Subscription(contextlib.AbstractAsyncContextManager):
             async def __aenter__(self):
-                _logger.debug("Authenticator subscribe")
                 emitter.on(emitter.EVENT_MAC, mac)
-                emitter.on(emitter.EVENT_SECURITY_HELLO, hello)
-                emitter.on(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
-                emitter.on(emitter.EVENT_SECURITY_SETKEY, setkey)
+                # emitter.on(emitter.EVENT_SECURITY_HELLO, hello)
+                # emitter.on(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
+                # emitter.on(emitter.EVENT_SECURITY_SETKEY, setkey)
 
             async def __aexit__(self, et, ev, tb):
-                _logger.debug("Authenticator unsubscribe")
                 emitter.off(emitter.EVENT_MAC, mac)
-                emitter.off(emitter.EVENT_SECURITY_HELLO, hello)
-                emitter.off(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
-                emitter.off(emitter.EVENT_SECURITY_SETKEY, setkey)
+                # emitter.off(emitter.EVENT_SECURITY_HELLO, hello)
+                # emitter.off(emitter.EVENT_SECURITY_HELLO_RESPONSE, hello_response)
+                # emitter.off(emitter.EVENT_SECURITY_SETKEY, setkey)
 
         async with _Subscription():
             try:

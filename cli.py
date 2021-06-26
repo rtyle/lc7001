@@ -1,4 +1,4 @@
-"""Command line shell to interact with LC7001 HOSTs
+"""Command Line Interpreter to interact with LC7001 HOSTs
 
 Run with --help to see command line usage.
 
@@ -10,8 +10,8 @@ Here, our _Adapter does nothing more than be an Authenticator and then an Emitte
 With DEBUG turned on, the messages passed in (>) to us and out (<) from us are logged.
 This is a great way to demonstrate the LC7001 behavior.
 
-There will be some type(s) of Interactor(s) that will need to interact with LC7001 HOSTs.
-Here, our _Interactor takes lines from STDIN, composes messages from them and sends them to
+There will be some type(s) of Interpreter(s) that will need to interact with LC7001 HOSTs.
+Here, our _Interpreter takes lines from STDIN, composes messages from them and sends them to
 (through the current session with) the currently targeted HOST.
 
 The STDIN commands are:
@@ -56,7 +56,7 @@ class _Adapter(lc7001.aio.Authenticator):
         _logger.debug("main exit")
 
 
-class _Interactor:  # pylint: disable=too-few-public-methods
+class _Interpreter:  # pylint: disable=too-few-public-methods
     @staticmethod
     async def _stdio():
         reader = asyncio.StreamReader()
@@ -166,7 +166,7 @@ class _Main:  # pylint: disable=too-few-public-methods
             _Adapter.streamer(lc7001.aio.Consumer.TIMEOUT, self._key, host=host)
             for host in self._hosts
         ]
-        interactor = _Interactor(self._hosts, streamers)
+        interactor = _Interpreter(self._hosts, streamers)
 
         async def _run(streamer):
             await streamer.main()
@@ -187,7 +187,7 @@ class _Main:  # pylint: disable=too-few-public-methods
 
 
 parser = argparse.ArgumentParser(
-    description="Command line shell to interact with LC7001 HOSTs"
+    description="Command Line Interpreter to interact with LC7001 HOSTs"
 )
 HOST: Final = lc7001.aio.Session.HOST
 PASSWORD: Final = lc7001.aio.Authenticator.PASSWORD

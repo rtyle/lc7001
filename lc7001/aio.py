@@ -477,7 +477,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
     # default constructor values
     # the Legrand Lighting Control App insists on 8 character minimum passwords
-    KEY: Final = hash(b"........")
+    PASSWORD: Final = "........"
+    KEY: Final = hash(PASSWORD.encode())
 
     # Security message prefixes
     SECURITY_MAC: Final = b'{"MAC":'

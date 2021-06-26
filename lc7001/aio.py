@@ -52,7 +52,10 @@ class Session:  # pylint: disable=too-few-public-methods
     def streamer(
         cls, *args, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT
     ):
-        """return _SessionStreamer(host, port, timeout, cls, *args), for this cls of Session."""
+        """Construct a _SessionStreamer for these (sub)types of Sessions.
+
+        The _SessionStreamer will call the Session constructor with the connected
+        reader and writer plus the *args provided here."""
         return _SessionStreamer(host, port, timeout, cls, *args)
 
     async def main(self):
@@ -60,27 +63,28 @@ class Session:  # pylint: disable=too-few-public-methods
         return True
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """Use Session.streamer to construct each Session with the connected reader, writer."""
         self._reader = reader
         self._writer = writer
 
 
-class _SessionStreamer:  # pylint: disable=too-few-public-methods
+class _SessionStreamer:
     """Stream sessions (one per connection)."""
 
     def session(self):
-        """Return the current session, perhaps None."""
+        """Return the current connected session, perhaps None."""
         return self._session
 
     async def main(self):
         """Return the result of the first successful session.
 
-        Return False if connection could not be made and timeout < 0;
-        otherwise, return the result of the first successful session.
+        Raise OSError if (and why) connection could not be made, if timeout < 0.
+        Otherwise, sleep for timeout seconds before trying again.
         Session.streamer(timeout = -1) can be used to test connectability."""
         while True:
             try:
                 async with _ConnectionContext(self._host, self._port) as connection:
-                    # connection success
+                    # connection success, will be closed with context exit
                     try:
                         self._session = self._type(*connection, *self._args)
                         return await self._session.main()
@@ -94,14 +98,15 @@ class _SessionStreamer:  # pylint: disable=too-few-public-methods
                         self._session = None
             except OSError as error:
                 # connection error
-                _logger.error("OSError %s", error)
                 if self._timeout < 0:
-                    return False
+                    raise
+                _logger.error("OSError %s", error)
                 await asyncio.sleep(self._timeout)
 
     def __init__(
         self, host: str, port: int, timeout: float, _type: Type[Session], *args
     ):
+        """Use a Session class's streamer method for construction."""
         self._host = host
         self._port = port
         self._timeout = timeout
@@ -110,7 +115,7 @@ class _SessionStreamer:  # pylint: disable=too-few-public-methods
         self._session = None
 
 
-class _Sender(Session):  # pylint: disable=too-few-public-methods
+class _Sender(Session):
 
     # message keys
     APP_CONTEXT_ID: Final = "AppContextId"  # echoed in reply
@@ -184,7 +189,7 @@ class _Sender(Session):  # pylint: disable=too-few-public-methods
     TRIGGER_RAMP_ALL_COMMAND: Final = "TriggerRampAllCommand"
 
     async def send(self, message: dict[str]):
-        """Send a composed message."""
+        """Send a composed message with the next ID."""
         _id = self._id + 1
         message[self._ID] = _id
         self._id = _id
@@ -232,6 +237,7 @@ class _Sender(Session):  # pylint: disable=too-few-public-methods
         }
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """Use a _Sender class's streamer method for construction."""
         super().__init__(reader, writer)
         self._id = 0  # id of last send
 
@@ -246,7 +252,11 @@ class Consumer(_Sender):
     DEVICE_TYPE: Final = "DeviceType"  # json_string, DIMMER/, consume only
 
     class StatusError(ValueError):
-        """StatusError constructed from a message."""
+        """StatusError whose args are derived from a message.
+
+        Returns (error: bool, code: int = 0, text: str = None)
+        where error is True if STATUS is not STATUS_SUCCESS,
+        code is ERROR_CODE value (or 0) and text is ERROR_TEXT value (or None)."""
 
         # message keys
         ERROR_TEXT: Final = "ErrorText"
@@ -259,8 +269,8 @@ class Consumer(_Sender):
 
         def __init__(self, message: dict[str]):
             super().__init__(
-                message.get(self.STATUS, None) != self.STATUS_SUCCESS,
-                message.get(self.ERROR_CODE, None),
+                message.get(self.STATUS, self.STATUS_ERROR) != self.STATUS_SUCCESS,
+                int(message.get(self.ERROR_CODE, "0")),
                 message.get(self.ERROR_TEXT, None),
             )
 
@@ -291,7 +301,7 @@ class Consumer(_Sender):
             )[:-1]
 
     async def unwrap(self, frame: bytes):
-        """Unwrap message(s) to consume."""
+        """Unwrap message in frame and consume it."""
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
@@ -310,6 +320,7 @@ class Consumer(_Sender):
         writer: asyncio.StreamWriter,
         timeout: float = TIMEOUT,
     ):
+        """Use a _Consumer class's streamer method (with timeout) for construction."""
         super().__init__(reader, writer)
         self._timeout = timeout
         self._frames = self._Frames(reader, timeout)
@@ -450,6 +461,7 @@ class Emitter(Consumer, _EventEmitter):
         writer: asyncio.StreamWriter,
         timeout: float = Consumer.TIMEOUT,
     ):
+        """Use an _Emitter class's streamer method (with timeout) for construction."""
         Consumer.__init__(self, reader, writer, timeout)
         _EventEmitter.__init__(self)
         self._emit_id = 1  # id of next emit
@@ -462,6 +474,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     If the phase ended with a SETKEY response, the StatusError.args formed from the response
     will be appended.
     """
+
+    # default constructor values
+    KEY: Final = b"........"  # the Legrand Lighting Control App insists on 8 characters
 
     # Security message prefixes
     SECURITY_MAC: Final = b'{"MAC":'
@@ -549,7 +564,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         raise self._Result(success, self._address)
 
     def _consume_security_mac(self, message):
-        raise self._Result(True, message[self.MAC])
+        self._address = message[self.MAC]
+        raise self._Result(True, self._address)
 
     def _unwrap_security_mac(self, frame):
         try:
@@ -589,8 +605,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         timeout: float = Consumer.TIMEOUT,
-        key: bytes = b"",
+        key: bytes = Authenticator.KEY,
     ):
+        """Use an Authenticator class's streamer method (with timeout and key) for construction."""
         super().__init__(reader, writer, timeout)
         self._key = key
         self._address = None

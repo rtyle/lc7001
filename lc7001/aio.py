@@ -44,7 +44,7 @@ class Session:  # pylint: disable=too-few-public-methods
     """Empty successful session."""
 
     # default arguments
-    HOST: Final = "LCM1.local"
+    HOST: Final = "LCM1.local."
     PORT: Final = 2112
     TIMEOUT: Final = 60.0
 

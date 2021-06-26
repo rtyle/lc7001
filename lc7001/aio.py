@@ -476,7 +476,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     """
 
     # default constructor values
-    KEY: Final = b"........"  # the Legrand Lighting Control App insists on 8 characters
+    # the Legrand Lighting Control App insists on 8 character minimum passwords
+    KEY: Final = hash(b"........")
 
     # Security message prefixes
     SECURITY_MAC: Final = b'{"MAC":'
@@ -605,7 +606,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         timeout: float = Consumer.TIMEOUT,
-        key: bytes = Authenticator.KEY,
+        key: bytes = KEY,
     ):
         """Use an Authenticator class's streamer method (with timeout and key) for construction."""
         super().__init__(reader, writer, timeout)

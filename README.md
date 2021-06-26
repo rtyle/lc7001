@@ -1,4 +1,4 @@
-# LC7001
+# lc7001
 Legrand LC7001 Python interface.
 
 See [cli.py](cli.py) for a demonstration of the [lc7001.aio](lc7001/aio.py) module usage. 

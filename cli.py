@@ -123,6 +123,11 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
                             )
                         )
 
+    def _quit(self):
+        for streamer in self._streamers:
+            streamer.cancel()
+        raise asyncio.CancelledError
+
     async def _command(self, session, line: str):
         token = iter(line.decode().strip().split())
         try:
@@ -135,7 +140,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
                 self._host %= len(self._hosts)
                 _logger.info("host %s", self._hosts[self._host])
             elif command.startswith("q"):
-                return True
+                self._quit()
             elif command.startswith("s"):
                 await self._command_scene(session, token)
             elif command.startswith("z"):
@@ -147,7 +152,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
         while True:
             line = await reader.readline()
             if len(line) == 0:
-                break
+                self._quit()
             session = self._streamers[self._host].session()
             if session is None:
                 _logger.error("%s not in session", self._hosts[self._host])

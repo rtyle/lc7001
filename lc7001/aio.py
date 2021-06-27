@@ -71,6 +71,11 @@ class Session:  # pylint: disable=too-few-public-methods
 class _SessionStreamer:
     """Stream sessions (one per connection)."""
 
+    def cancel(self):
+        """Cancel the task running main()."""
+        if self._task is not None:
+            self._task.cancel()
+
     def session(self):
         """Return the current connected session, perhaps None."""
         return self._session
@@ -81,6 +86,7 @@ class _SessionStreamer:
         Raise OSError if (and why) connection could not be made, if timeout < 0.
         Otherwise, sleep for timeout seconds before trying again.
         Session.streamer(timeout = -1) can be used to test connectability."""
+        self._task = asyncio.current_task()
         while True:
             try:
                 async with _ConnectionContext(self._host, self._port) as connection:
@@ -112,6 +118,7 @@ class _SessionStreamer:
         self._timeout = timeout
         self._type = _type
         self._args = args
+        self._task = None
         self._session = None
 
 

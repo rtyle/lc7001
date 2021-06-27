@@ -50,10 +50,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 class _Adapter(lc7001.aio.Authenticator):
     async def main(self):
-        authenticated = await super().main()
-        success, address, *setkey = authenticated
-        if not success:
-            raise ValueError(*authenticated)
+        address = await super().main()
         await lc7001.aio.Emitter.main(self)
 
 

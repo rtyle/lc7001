@@ -60,7 +60,7 @@ class Session:  # pylint: disable=too-few-public-methods
 
     async def main(self):
         """Connection successful!"""
-        return True
+        return
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Use Session.streamer to construct each Session with the connected reader, writer."""
@@ -477,9 +477,8 @@ class Emitter(Consumer, _EventEmitter):
 class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     """An Authenticator session runs for the first/authentication phase only.
 
-    This phase will either end by exception or a (success: bool, address: bytes) result.
-    If the phase ended with a SETKEY response, the StatusError.args formed from the response
-    will be appended.
+    This phase will either end by exception (Authentication.Error)
+    or the MAC address of the unit that we successfully authenticated with.
     """
 
     # default constructor values
@@ -513,8 +512,11 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         encryptor = cipher.encryptor()
         return encryptor.update(data) + encryptor.finalize()
 
-    class _Result(StopAsyncIteration):
-        pass
+    class Error(ValueError):
+        """Authentication error."""
+
+    class _Result(asyncio.CancelledError):
+        """Chained from an Error if there was one."""
 
     async def send_challenge_response(self, key: bytes, challenge: bytes):
         """Send a challenge response (the AES(key) encryption of challenge)."""
@@ -549,8 +551,12 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
             async def handle(message: dict[str]):
                 _logger.info("%s", message)
-                error = self.StatusError(message)
-                raise self._Result(not error, self._address, *error.args)
+                try:
+                    self.StatusError(message).raise_if()
+                except self.StatusError as error:
+                    raise self._Result() from error
+                else:
+                    raise self._Result()
 
             await self.handle_send(handle, self.compose_keys(self.hash(b""), self._key))
 
@@ -570,11 +576,13 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
     def _consume_security_hello_response(self, success: bool):
         """Consume SECURITY_OK/SECURITY_INVALID message from challenge response."""
-        raise self._Result(success, self._address)
+        if success:
+            raise self._Result()
+        raise self._Result() from self.Error("Invalid")
 
     def _consume_security_mac(self, message):
         self._address = message[self.MAC]
-        raise self._Result(True, self._address)
+        raise self._Result()
 
     async def _unwrap_security_mac(self, frame):
         try:
@@ -590,7 +598,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
                 _logger.error("except json.JSONDecodeError: %s %s", error, frames)
             else:
                 mac, *others = messages
-                # consume others first because we'll quit in _consume_security_mac
+                # consume others first because we'll be cancelled in _consume_security_mac
                 for message in others:
                     await self.consume(message)
                 self._consume_security_mac(mac)
@@ -612,8 +620,10 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     async def main(self):
         try:
             await super().main()
-        except self._Result as result:
-            return result.args
+        except self._Result as root:
+            if root.__cause__ is None:
+                return self._address
+            raise root.__cause__ from None
 
     def __init__(
         self,

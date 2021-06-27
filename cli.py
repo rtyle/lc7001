@@ -210,9 +210,8 @@ parser.add_argument(
     metavar="HOST",
     type=str,
     nargs="*",
-    default=HOST,
+    default=[HOST],
     help=f"resolves to LC7001 IP address (default {HOST})",
 )
 args = parser.parse_args()
-
-_Main(lc7001.aio.Authenticator.hash(args.password.encode()), args.hosts)
+_Main(lc7001.aio.Authenticator.hash(args.password.encode()), *args.hosts)

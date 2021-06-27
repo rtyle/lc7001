@@ -166,13 +166,13 @@ class _Main:  # pylint: disable=too-few-public-methods
             _Adapter.streamer(lc7001.aio.Consumer.TIMEOUT, self._key, host=host)
             for host in self._hosts
         ]
-        interactor = _Interpreter(self._hosts, streamers)
+        interpreter = _Interpreter(self._hosts, streamers)
 
         async def _run(streamer):
             await streamer.main()
 
         await asyncio.gather(
-            interactor.main(), *(_run(streamer) for streamer in streamers)
+            interpreter.main(), *(_run(streamer) for streamer in streamers)
         )
 
     def __init__(self, key, *hosts):

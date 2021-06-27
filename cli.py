@@ -24,11 +24,11 @@ q           -- quit
 
 s           -- send a LIST_SCENES message
 s *         -- send a LIST_SCENES message then a REPORT_SCENE_PROPERTIES for each listed
-s SID       -- send a REPORT_SCENE_PROPERTIS message for SID (0-99)
+s SID       -- send a REPORT_SCENE_PROPERTIES message for SID (0-99)
 
 z           -- send a LIST_ZONES message
 z *         -- send a LIST_ZONES message then a REPORT_ZONE_PROPERTIES for each listed
-z ZID       -- send a REPORT_ZONE_PROPERTIS message for ZID (0-99)
+z ZID       -- send a REPORT_ZONE_PROPERTIES message for ZID (0-99)
 z ZID 0|1   -- send a SET_ZONE_PROPERTIES message with POWER as False|True
 z ZID #     -- send a SET_ZONE_PROPERTIES message with POWER_LEVEL as # - 1
 """

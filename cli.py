@@ -51,9 +51,10 @@ logging.basicConfig(level=logging.DEBUG)
 class _Adapter(lc7001.aio.Authenticator):
     async def main(self):
         authenticated = await super().main()
-        _logger.debug(authenticated)
+        success, address, *setkey = authenticated
+        if not success:
+            raise ValueError(*authenticated)
         await lc7001.aio.Emitter.main(self)
-        _logger.debug("main exit")
 
 
 class _Interpreter:  # pylint: disable=too-few-public-methods
@@ -189,7 +190,7 @@ class _Main:  # pylint: disable=too-few-public-methods
 parser = argparse.ArgumentParser(
     description="Command Line Interpreter to interact with LC7001 HOSTs"
 )
-HOST: Final = lc7001.aio.Session.HOST
+HOSTS: Final = [lc7001.aio.Session.HOST]
 PASSWORD: Final = lc7001.aio.Authenticator.PASSWORD
 parser.add_argument(
     "--password",
@@ -205,8 +206,8 @@ parser.add_argument(
     metavar="HOST",
     type=str,
     nargs="*",
-    default=[HOST],
-    help=f"resolves to LC7001 IP address (default {HOST})",
+    default=HOSTS,
+    help=f"resolves to LC7001 IP address (default {HOSTS[0]})",
 )
 args = parser.parse_args()
 _Main(lc7001.aio.Authenticator.hash(args.password.encode()), *args.hosts)

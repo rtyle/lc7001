@@ -576,22 +576,28 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         self._address = message[self.MAC]
         raise self._Result(True, self._address)
 
-    def _unwrap_security_mac(self, frame):
+    async def _unwrap_security_mac(self, frame):
         try:
             message = json.loads(frame)
             self._consume_security_mac(message)
         except json.JSONDecodeError as error:
-            # this frame may have another JSON encoded message packed in it. cut ours out.
+            # this frame may be concatenated (improperly, for JSON) with another(s).
+            # rewrite as an array of frames
+            frames = b"[" + frame.replace(b"}{", b"},{") + b"]"
             try:
-                cut = frame[: frame.rindex(b"{")]
-                message = json.loads(cut)
-                self._consume_security_mac(message)
+                messages = json.loads(frames)
             except json.JSONDecodeError as error:
-                _logger.error("except json.JSONDecodeError: %s %s", error, cut)
+                _logger.error("except json.JSONDecodeError: %s %s", error, frames)
+            else:
+                mac, *others = messages
+                # consume others first because we'll quit in _consume_security_mac
+                for message in others:
+                    await self.consume(message)
+                self._consume_security_mac(mac)
 
     async def unwrap(self, frame: bytes):
         if frame.startswith(self.SECURITY_MAC):
-            self._unwrap_security_mac(frame)
+            await self._unwrap_security_mac(frame)
         # elif frame.startswith(self.SECURITY_SETKEY):
         #     await self._consume_security_setkey()
         # elif frame.startswith(self.SECURITY_HELLO):

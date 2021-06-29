@@ -598,10 +598,11 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
                 _logger.error("except json.JSONDecodeError: %s %s", error, frames)
             else:
                 mac, *others = messages
-                # consume others first because we'll be cancelled in _consume_security_mac
-                for message in others:
-                    await self.consume(message)
-                self._consume_security_mac(mac)
+                try:
+                    self._consume_security_mac(mac)
+                finally:
+                    for message in others:
+                        await self.consume(message)
 
     async def unwrap(self, frame: bytes):
         if frame.startswith(self.SECURITY_MAC):

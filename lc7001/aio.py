@@ -13,6 +13,7 @@ import collections
 import contextlib
 import json
 import logging
+import time
 from typing import Final, Type
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -45,7 +46,7 @@ class Session:  # pylint: disable=too-few-public-methods
     # default arguments
     HOST: Final = "LCM1.local."
     PORT: Final = 2112
-    TIMEOUT: Final = 60.0
+    TIMEOUT: Final = 2 ** 8
 
     @classmethod
     def streamer(
@@ -83,30 +84,40 @@ class _SessionStreamer:
         """Return the result of the first successful session.
 
         Raise OSError if (and why) connection could not be made, if timeout < 0.
-        Otherwise, sleep for timeout seconds before trying again.
+        Otherwise, sleep for up to timeout seconds before trying again.
         Session.streamer(timeout = -1) can be used to test connectability."""
         self._task = asyncio.current_task()
-        while True:
-            try:
-                async with _ConnectionContext(self._host, self._port) as connection:
-                    # connection success, will be closed with context exit
-                    try:
-                        self._session = self._type(*connection, *self._args)
-                        return await self._session.main()
-                    except EOFError as error:
-                        _logger.error("EOFError")
-                    except OSError as error:
-                        _logger.error("OSError %s", error)
-                    except asyncio.TimeoutError:
-                        _logger.error("asyncio.TimeoutError")
-                    finally:
-                        self._session = None
-            except OSError as error:
-                # connection error
-                if self._timeout < 0:
-                    raise
-                _logger.error("OSError %s", error)
-                await asyncio.sleep(self._timeout)
+        count = 0
+        try:
+            while True:
+                before = time.monotonic()
+                try:
+                    async with _ConnectionContext(self._host, self._port) as connection:
+                        # connection success, will be closed with context exit
+                        try:
+                            self._session = self._type(*connection, *self._args)
+                            return await self._session.main()
+                        except EOFError as error:
+                            _logger.error("EOFError")
+                        except OSError as error:
+                            _logger.error("OSError %s", error)
+                        except asyncio.TimeoutError:
+                            _logger.error("asyncio.TimeoutError")
+                        finally:
+                            self._session = None
+                except OSError as error:
+                    # connection error
+                    if self._timeout < 0:
+                        raise
+                    _logger.error("OSError %s", error)
+                duration = time.monotonic() - before
+                if duration > 16:
+                    count = 0
+                else:
+                    count += 1
+                await asyncio.sleep(min(2 ** count, self._timeout))
+        finally:
+            self._task = None
 
     def __init__(
         self, host: str, port: int, timeout: float, _type: Type[Session], *args

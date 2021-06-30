@@ -589,8 +589,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             message = json.loads(frame)
             self._consume_security_mac(message)
         except json.JSONDecodeError as error:
-            # this frame may be concatenated (improperly, for JSON) with another(s).
-            # rewrite as an array of frames
+            # this frame may be concatenated (improperly, for JSON) with another(s?).
+            # rewrite/retry it as an array of frames
             frames = b"[" + frame.replace(b"}{", b"},{") + b"]"
             try:
                 messages = json.loads(frames)

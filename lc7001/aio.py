@@ -32,12 +32,11 @@ class _ConnectionContext(contextlib.AbstractAsyncContextManager):
         return (reader, self._writer)
 
     async def __aexit__(self, et, ev, tb):
-        if self._writer is not None:
-            self._writer.close()
-            try:
-                await self._writer.wait_closed()
-            except OSError:
-                pass
+        self._writer.close()
+        try:
+            await self._writer.wait_closed()
+        except OSError:
+            pass
 
 
 class Session:  # pylint: disable=too-few-public-methods

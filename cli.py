@@ -149,15 +149,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
 
 class _Main:  # pylint: disable=too-few-public-methods
     async def _main(self):
-        hubs = [
-            lc7001.aio.Hub(
-                host,
-                lc7001.aio.Connector.PORT,
-                lc7001.aio.Connector.LOOP_TIMEOUT,
-                self._key,
-            )
-            for host in self._hosts
-        ]
+        hubs = [lc7001.aio.Hub(host, key=self._key) for host in self._hosts]
         interpreter = _Interpreter(self._hosts, hubs)
 
         await asyncio.gather(interpreter.main(), *(hub.loop() for hub in hubs))

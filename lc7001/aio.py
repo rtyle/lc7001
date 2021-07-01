@@ -147,7 +147,6 @@ class _Sender:
         }
 
     def __init__(self, writer: asyncio.StreamWriter = None):
-        """Use a _Sender class's streamer method for construction."""
         self._writer = writer
         self._id = 0  # id of last send
 
@@ -420,7 +419,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         """Chained from an Error if there was one."""
 
     async def _send_challenge_response(self, key: bytes, challenge: bytes):
-        """Send a challenge response (the AES(key) encryption of challenge)."""
         message = self._encrypt(key, challenge).hex()
         writer = self._writer
         writer.write(message.encode())
@@ -428,7 +426,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         _logger.debug("\t<\t%s", message)
 
     def _compose_keys(self, old: bytes, new: bytes):
-        """Compose a SET_SYSTEM_PROPERTIES message with KEYS made from old and new."""
         return {
             self.SERVICE: self.SET_SYSTEM_PROPERTIES,
             self.PROPERTY_LIST: {
@@ -439,7 +436,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         }
 
     async def _consume_security_setkey(self):
-        """Consume a SECURITY_SETKEY message."""
         # } terminated json encoding
         frame = await asyncio.wait_for(self._reader.readuntil(b"}"), self._read_timeout)
         _logger.debug("\t>\t%s", frame.decode())
@@ -463,7 +459,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             )
 
     async def _consume_security_hello(self):
-        """Consume a SECURITY_HELLO message."""
         # space terminated challenge phrase
         challenge = (
             await asyncio.wait_for(self._reader.readuntil(b" "), self._read_timeout)
@@ -479,7 +474,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         )
 
     def _consume_security_hello_response(self, success: bool):
-        """Consume SECURITY_OK/SECURITY_INVALID message from challenge response."""
         if success:
             raise self._Result()
         raise self._Result() from self.Error("Invalid")
@@ -539,7 +533,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         reader: asyncio.StreamReader = None,
         writer: asyncio.StreamWriter = None,
     ):
-        """Use an Authenticator class's streamer method (with timeout and key) for construction."""
         self._key = key
         super().__init__(read_timeout, reader, writer)
         self._address = None
@@ -616,8 +609,8 @@ class Connector(Authenticator):
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
-        host: str,
-        port: int,
+        host: str = HOST,
+        port: int = PORT,
         loop_timeout: float = LOOP_TIMEOUT,
         key: bytes = Authenticator.KEY,
         read_timeout: float = Consumer.READ_TIMEOUT,

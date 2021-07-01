@@ -14,7 +14,7 @@ import contextlib
 import json
 import logging
 import time
-from typing import Final, Type
+from typing import Final
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
@@ -22,117 +22,7 @@ from cryptography.hazmat.primitives import hashes
 _logger: Final = logging.getLogger(__name__)
 
 
-class _ConnectionContext(contextlib.AbstractAsyncContextManager):
-    def __init__(self, host: str, port: int):
-        self._host = host
-        self._port = port
-        self._writer = None
-
-    async def __aenter__(self):
-        reader, self._writer = await asyncio.open_connection(self._host, self._port)
-        return (reader, self._writer)
-
-    async def __aexit__(self, et, ev, tb):
-        self._writer.close()
-        try:
-            await self._writer.wait_closed()
-        except OSError:
-            pass
-
-
-class Session:  # pylint: disable=too-few-public-methods
-    """Empty successful session."""
-
-    # default arguments
-    HOST: Final = "LCM1.local."
-    PORT: Final = 2112
-    TIMEOUT: Final = 2 ** 8
-
-    @classmethod
-    def streamer(
-        cls, *args, host: str = HOST, port: int = PORT, timeout: float = TIMEOUT
-    ):
-        """Construct a _SessionStreamer for these (sub)types of Sessions.
-
-        The _SessionStreamer will call the Session constructor with the connected
-        reader and writer plus the *args provided here."""
-        return _SessionStreamer(host, port, timeout, cls, *args)
-
-    async def main(self):
-        """Connection successful!"""
-        return
-
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        """Use Session.streamer to construct each Session with the connected reader, writer."""
-        self._reader = reader
-        self._writer = writer
-
-
-class _SessionStreamer:
-    """Stream sessions (one per connection)."""
-
-    def cancel(self):
-        """Cancel the task running main()."""
-        if self._task is not None:
-            self._task.cancel()
-
-    def session(self):
-        """Return the current connected session, perhaps None."""
-        return self._session
-
-    async def main(self):
-        """Return the result of the first successful session.
-
-        Raise OSError if (and why) connection could not be made, if timeout < 0.
-        Otherwise, sleep for up to timeout seconds before trying again.
-        Session.streamer(timeout = -1) can be used to test connectability."""
-        self._task = asyncio.current_task()
-        count = 0
-        try:
-            while True:
-                before = time.monotonic()
-                try:
-                    async with _ConnectionContext(self._host, self._port) as connection:
-                        # connection success, will be closed with context exit
-                        try:
-                            self._session = self._type(*connection, *self._args)
-                            return await self._session.main()
-                        except EOFError as error:
-                            _logger.error("EOFError")
-                        except OSError as error:
-                            _logger.error("OSError %s", error)
-                        except asyncio.TimeoutError:
-                            _logger.error("asyncio.TimeoutError")
-                        finally:
-                            self._session = None
-                except OSError as error:
-                    # connection error
-                    if self._timeout < 0:
-                        raise
-                    _logger.error("OSError %s", error)
-                duration = time.monotonic() - before
-                if duration > 16:
-                    count = 0
-                else:
-                    count += 1
-                await asyncio.sleep(min(2 ** count, self._timeout))
-        finally:
-            self._task = None
-
-    def __init__(
-        self, host: str, port: int, timeout: float, _type: Type[Session], *args
-    ):
-        """Use a Session class's streamer method for construction."""
-        self._host = host
-        self._port = port
-        self._timeout = timeout
-        self._type = _type
-        self._args = args
-        self._task = None
-        self._session = None
-
-
-class _Sender(Session):
+class _Sender:
 
     # message keys
     APP_CONTEXT_ID: Final = "AppContextId"  # echoed in reply
@@ -207,14 +97,17 @@ class _Sender(Session):
 
     async def send(self, message: dict[str]):
         """Send a composed message with the next ID."""
-        _id = self._id + 1
-        message[self._ID] = _id
-        self._id = _id
         writer = self._writer
-        writer.write(json.dumps(message).encode())
-        writer.write(b"\x00")
-        await writer.drain()
-        _logger.debug("\t< %s", message)
+        if writer is None:
+            _logger.error("\t<!\t%s", message)
+        else:
+            _id = self._id + 1
+            message[self._ID] = _id
+            self._id = _id
+            writer.write(json.dumps(message).encode())
+            writer.write(b"\x00")
+            await writer.drain()
+            _logger.debug("\t<\t%s", message)
 
     def compose_list_scenes(self):
         """Compose a LIST_SCENES message."""
@@ -253,17 +146,28 @@ class _Sender(Session):
             self.PROPERTY_LIST: property_list,
         }
 
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    def __init__(self, writer: asyncio.StreamWriter = None):
         """Use a _Sender class's streamer method for construction."""
-        super().__init__(reader, writer)
+        self._writer = writer
         self._id = 0  # id of last send
+
+
+class _Inner:  # pylint: disable=too-few-public-methods
+    """An _Inner instance remembers its outer instance."""
+
+    def __init__(self, outer):
+        self._outer = outer
+
+    def outer(self):
+        """Get private _outer attribute."""
+        return self._outer
 
 
 class Consumer(_Sender):
     """A Consumer (is also a _Sender) whose messages are handled by an abstract consume method."""
 
     # default constructor values
-    TIMEOUT: Final = 60.0
+    READ_TIMEOUT: Final = 20.0  # expect ping every 5 seconds
 
     # ZONE PROPERTY_LIST keys
     DEVICE_TYPE: Final = "DeviceType"  # json_string, DIMMER/, consume only
@@ -303,18 +207,16 @@ class Consumer(_Sender):
     async def consume(self, message: dict[str]):
         """Consume a message."""
 
-    class _Frames(collections.abc.AsyncIterator):
-        def __init__(self, reader: asyncio.StreamReader, timeout):
-            self._reader = reader
-            self._timeout = timeout
-
+    class _Frames(_Inner, collections.abc.AsyncIterator):
         def __aiter__(self):
             return self
 
         async def __anext__(self):
             # return null terminated frame, without the terminator
             return (
-                await asyncio.wait_for(self._reader.readuntil(b"\x00"), self._timeout)
+                await asyncio.wait_for(
+                    self.outer()._reader.readuntil(b"\x00"), self.outer()._read_timeout
+                )
             )[:-1]
 
     async def unwrap(self, frame: bytes):
@@ -326,32 +228,22 @@ class Consumer(_Sender):
         else:
             await self.consume(message)
 
-    async def main(self):
+    async def session(self):
+        """Iterate over read frames forever."""
         async for frame in self._frames:
-            _logger.debug("\t> %s", frame.decode())
+            _logger.debug("\t>\t%s", frame.decode())
             await self.unwrap(frame)
 
     def __init__(
         self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-        timeout: float = TIMEOUT,
+        read_timeout: float = READ_TIMEOUT,
+        reader: asyncio.StreamReader = None,
+        writer: asyncio.StreamWriter = None,
     ):
-        """Use a _Consumer class's streamer method (with timeout) for construction."""
-        super().__init__(reader, writer)
-        self._timeout = timeout
-        self._frames = self._Frames(reader, timeout)
-
-
-class _Inner:  # pylint: disable=too-few-public-methods
-    """An _Inner instance remembers its outer instance."""
-
-    def __init__(self, outer):
-        self._outer = outer
-
-    def outer(self):
-        """Get private _outer attribute."""
-        return self._outer
+        self._read_timeout = read_timeout
+        self._reader = reader
+        super().__init__(writer)
+        self._frames = self._Frames(self)
 
 
 class _EventEmitter:
@@ -474,12 +366,11 @@ class Emitter(Consumer, _EventEmitter):
 
     def __init__(
         self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-        timeout: float = Consumer.TIMEOUT,
+        read_timeout: float = Consumer.READ_TIMEOUT,
+        reader: asyncio.StreamReader = None,
+        writer: asyncio.StreamWriter = None,
     ):
-        """Use an _Emitter class's streamer method (with timeout) for construction."""
-        Consumer.__init__(self, reader, writer, timeout)
+        Consumer.__init__(self, read_timeout, reader, writer)
         _EventEmitter.__init__(self)
         self._emit_id = 1  # id of next emit
 
@@ -528,15 +419,15 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     class _Result(asyncio.CancelledError):
         """Chained from an Error if there was one."""
 
-    async def send_challenge_response(self, key: bytes, challenge: bytes):
+    async def _send_challenge_response(self, key: bytes, challenge: bytes):
         """Send a challenge response (the AES(key) encryption of challenge)."""
         message = self._encrypt(key, challenge).hex()
         writer = self._writer
         writer.write(message.encode())
         await writer.drain()
-        _logger.debug("\t< %s", message)
+        _logger.debug("\t<\t%s", message)
 
-    def compose_keys(self, old: bytes, new: bytes):
+    def _compose_keys(self, old: bytes, new: bytes):
         """Compose a SET_SYSTEM_PROPERTIES message with KEYS made from old and new."""
         return {
             self.SERVICE: self.SET_SYSTEM_PROPERTIES,
@@ -550,7 +441,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     async def _consume_security_setkey(self):
         """Consume a SECURITY_SETKEY message."""
         # } terminated json encoding
-        frame = await asyncio.wait_for(self._reader.readuntil(b"}"), self._timeout)
+        frame = await asyncio.wait_for(self._reader.readuntil(b"}"), self._read_timeout)
         _logger.debug("\t>\t%s", frame.decode())
         try:
             message = json.loads(frame)
@@ -560,7 +451,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             self._address = message[self.MAC]
 
             async def handle(message: dict[str]):
-                _logger.info("%s", message)
                 try:
                     self.StatusError(message).raise_if()
                 except self.StatusError as error:
@@ -568,21 +458,25 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
                 else:
                     raise self._Result()
 
-            await self.handle_send(handle, self.compose_keys(self.hash(b""), self._key))
+            await self.handle_send(
+                handle, self._compose_keys(self.hash(b""), self._key)
+            )
 
     async def _consume_security_hello(self):
         """Consume a SECURITY_HELLO message."""
         # space terminated challenge phrase
         challenge = (
-            await asyncio.wait_for(self._reader.readuntil(b" "), self._timeout)
+            await asyncio.wait_for(self._reader.readuntil(b" "), self._read_timeout)
         )[:-1]
-        _logger.debug("\t>\t%s", challenge.decode())
+        _logger.debug("\t>\t\t%s", challenge.decode())
         # 12 byte MAC address
         self._address = await asyncio.wait_for(
-            self._reader.readexactly(12), self._timeout
+            self._reader.readexactly(12), self._read_timeout
         )
-        _logger.debug("\t>\t%s", self._address.decode())
-        await self.send_challenge_response(self._key, bytes.fromhex(challenge.decode()))
+        _logger.debug("\t>\t\t%s", self._address.decode())
+        await self._send_challenge_response(
+            self._key, bytes.fromhex(challenge.decode())
+        )
 
     def _consume_security_hello_response(self, success: bool):
         """Consume SECURITY_OK/SECURITY_INVALID message from challenge response."""
@@ -628,22 +522,116 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         else:
             await super().unwrap(frame)
 
-    async def main(self):
+    async def session(self):
         try:
-            await super().main()
+            await super().session()
         except self._Result as root:
+            address = self._address
+            self._address = None
             if root.__cause__ is None:
-                return self._address
+                return address
             raise root.__cause__ from None
 
     def __init__(
         self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-        timeout: float = Consumer.TIMEOUT,
         key: bytes = KEY,
+        read_timeout: float = Consumer.READ_TIMEOUT,
+        reader: asyncio.StreamReader = None,
+        writer: asyncio.StreamWriter = None,
     ):
         """Use an Authenticator class's streamer method (with timeout and key) for construction."""
-        super().__init__(reader, writer, timeout)
         self._key = key
+        super().__init__(read_timeout, reader, writer)
         self._address = None
+
+
+class _ConnectionContext(contextlib.AbstractAsyncContextManager):
+    def __init__(self, host: str, port: int):
+        self._host = host
+        self._port = port
+        self._writer = None
+
+    async def __aenter__(self):
+        reader, self._writer = await asyncio.open_connection(self._host, self._port)
+        return (reader, self._writer)
+
+    async def __aexit__(self, et, ev, tb):
+        self._writer.close()
+        try:
+            await self._writer.wait_closed()
+        except OSError:
+            pass
+
+
+class Connector(Authenticator):
+    """A Connector is an Authenticator that loops over connections/sessions."""
+
+    # default arguments
+    HOST: Final = "LCM1.local."
+    PORT: Final = 2112
+    LOOP_TIMEOUT: Final = 2 ** 8
+
+    def cancel(self):
+        """Cancel the task running loop()."""
+        if self._task is not None:
+            self._task.cancel()
+
+    async def loop(self):
+        """Return the result of the first successful connection/session.
+
+        Raise OSError if (and why) connection could not be made, if loop_timeout < 0.
+        Otherwise, sleep for up to loop_timeout seconds before trying again."""
+        self._task = asyncio.current_task()
+        count = 0
+        try:
+            while True:
+                before = time.monotonic()
+                try:
+                    async with _ConnectionContext(self._host, self._port) as connection:
+                        self._reader, self._writer = connection
+                        # connection success, will be closed with context exit
+                        try:
+                            return await self.session()
+                        except EOFError as error:
+                            _logger.error("EOFError")
+                        except OSError as error:
+                            _logger.error("OSError %s", error)
+                        except asyncio.TimeoutError:
+                            _logger.error("asyncio.TimeoutError")
+                        finally:
+                            self._reader, self._writer = None, None
+                except OSError as error:
+                    # connection error
+                    if self._loop_timeout < 0:
+                        raise
+                    _logger.error("OSError %s", error)
+                duration = time.monotonic() - before
+                if duration > self._loop_timeout:
+                    count = 0
+                else:
+                    count += 1
+                await asyncio.sleep(min(2 ** count, self._loop_timeout))
+        finally:
+            self._task = None
+
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        host: str,
+        port: int,
+        loop_timeout: float = LOOP_TIMEOUT,
+        key: bytes = Authenticator.KEY,
+        read_timeout: float = Consumer.READ_TIMEOUT,
+    ):
+        self._host = host
+        self._port = port
+        self._loop_timeout = loop_timeout
+        super().__init__(key, read_timeout)
+        self._task = None
+
+
+class Hub(Connector):
+    """A Hub is a Connector where each session acts as an Authenticator then Emitter."""
+
+    async def session(self):
+        await Authenticator.session(self)
+        await Emitter.session(self)

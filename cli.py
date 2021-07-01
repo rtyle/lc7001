@@ -4,9 +4,10 @@ Run with --help to see command line usage.
 
 This code serves as a demonstration of expected lc7001.aio usage:
 
-There will be some type(s) of Adaptor(s) to add behavior beyond that of an
-lc7001.aio.Authenticator (which is a message Emitter, Consumer and Sender).
-Here, our _Adapter does nothing more than be an Authenticator and then an Emitter.
+There will be some type(s) of Hub(s) to add behavior beyond that of a
+Connector (which is a message Authenticator, Emitter, Consumer and Sender).
+Here, we use Hub which does nothing more than be an Authenticator and then an Emitter
+for each connection/session.
 With DEBUG turned on, the messages passed in (>) to us and out (<) from us are logged.
 This is a great way to demonstrate the LC7001 behavior.
 
@@ -48,12 +49,6 @@ _logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 
-class _Adapter(lc7001.aio.Authenticator):
-    async def main(self):
-        address = await super().main()
-        await lc7001.aio.Emitter.main(self)
-
-
 class _Interpreter:  # pylint: disable=too-few-public-methods
     @staticmethod
     async def _stdio():
@@ -67,111 +62,105 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
         await loop.connect_read_pipe(lambda: reader_protocol, sys.stdin)
         return reader, writer
 
-    async def _command_scene(self, session, token):
+    async def _command_scene(self, hub, token):
         try:
             sid = next(token)
         except StopIteration:
-            await session.send(session.compose_list_scenes())
+            await hub.send(hub.compose_list_scenes())
         else:
             if sid == "*":
 
                 async def handle(message):
                     lc7001.aio.Consumer.StatusError(message).raise_if()
-                    for item in message[session.SCENE_LIST]:
-                        await session.send(
-                            session.compose_report_scene_properties(item[session.SID])
+                    for item in message[hub.SCENE_LIST]:
+                        await hub.send(
+                            hub.compose_report_scene_properties(item[hub.SID])
                         )
 
-                await session.handle_send(handle, session.compose_list_scenes())
+                await hub.handle_send(handle, hub.compose_list_scenes())
             else:
-                await session.send(session.compose_report_scene_properties(int(sid)))
+                await hub.send(hub.compose_report_scene_properties(int(sid)))
 
-    async def _command_zone(self, session, token):
+    async def _command_zone(self, hub, token):
         try:
             zid = next(token)
         except StopIteration:
-            await session.send(session.compose_list_zones())
+            await hub.send(hub.compose_list_zones())
         else:
             if zid == "*":
 
                 async def handle(message):
                     lc7001.aio.Consumer.StatusError(message).raise_if()
-                    for item in message[session.ZONE_LIST]:
-                        await session.send(
-                            session.compose_report_zone_properties(item[session.ZID])
+                    for item in message[hub.ZONE_LIST]:
+                        await hub.send(
+                            hub.compose_report_zone_properties(item[hub.ZID])
                         )
 
-                await session.handle_send(handle, session.compose_list_zones())
+                await hub.handle_send(handle, hub.compose_list_zones())
             else:
                 try:
                     value = int(next(token))
                 except StopIteration:
-                    await session.send(session.compose_report_zone_properties(int(zid)))
+                    await hub.send(hub.compose_report_zone_properties(int(zid)))
                 else:
                     if value < 2:
-                        await session.send(
-                            session.compose_set_zone_properties(
-                                int(zid), power=bool(value)
-                            )
+                        await hub.send(
+                            hub.compose_set_zone_properties(int(zid), power=bool(value))
                         )
                     else:
-                        await session.send(
-                            session.compose_set_zone_properties(
+                        await hub.send(
+                            hub.compose_set_zone_properties(
                                 int(zid), power_level=value - 1
                             )
                         )
 
-    async def _command(self, session, line: str):
+    async def _command(self, hub, line: str):
         token = iter(line.decode().strip().split())
         try:
             command = next(token)
         except StopIteration:
-            await session.send(session.compose_report_system_properties())
+            await hub.send(hub.compose_report_system_properties())
         else:
             if command.startswith("h"):
                 self._host += 1
                 self._host %= len(self._hosts)
                 _logger.info("host %s", self._hosts[self._host])
             elif command.startswith("s"):
-                await self._command_scene(session, token)
+                await self._command_scene(hub, token)
             elif command.startswith("z"):
-                await self._command_zone(session, token)
+                await self._command_zone(hub, token)
 
     async def main(self):
-        """Translate commands from STDIN, through current session, to selected host."""
+        """Interpret commands from STDIN to hub of selected host."""
         reader, _ = await self._stdio()
         while True:
             line = await reader.readline()
             if len(line) == 0 or line.startswith(b"q"):
-                for streamer in self._streamers:
-                    streamer.cancel()
+                for hub in self._hubs:
+                    hub.cancel()
                 raise asyncio.CancelledError
-            session = self._streamers[self._host].session()
-            if session is None:
-                _logger.error("%s not in session", self._hosts[self._host])
-                continue
-            await self._command(session, line)
+            await self._command(self._hubs[self._host], line)
 
-    def __init__(self, hosts: Sequence[str], streamers: Sequence):
-        self._streamers = streamers
+    def __init__(self, hosts: Sequence[str], hubs: Sequence):
+        self._hubs = hubs
         self._hosts = hosts
         self._host = 0
 
 
 class _Main:  # pylint: disable=too-few-public-methods
     async def _main(self):
-        streamers = [
-            _Adapter.streamer(lc7001.aio.Consumer.TIMEOUT, self._key, host=host)
+        hubs = [
+            lc7001.aio.Hub(
+                host,
+                lc7001.aio.Connector.PORT,
+                lc7001.aio.Connector.LOOP_TIMEOUT,
+                self._key,
+            )
             for host in self._hosts
         ]
-        interpreter = _Interpreter(self._hosts, streamers)
+        interpreter = _Interpreter(self._hosts, hubs)
 
-        async def _run(streamer):
-            await streamer.main()
-
-        await asyncio.gather(
-            interpreter.main(), *(_run(streamer) for streamer in streamers)
-        )
+        await asyncio.gather(interpreter.main(), *(hub.loop() for hub in hubs))
 
     def __init__(self, key, *hosts):
         self._key = key
@@ -187,7 +176,7 @@ class _Main:  # pylint: disable=too-few-public-methods
 parser = argparse.ArgumentParser(
     description="Command Line Interpreter to interact with LC7001 HOSTs"
 )
-HOSTS: Final = [lc7001.aio.Session.HOST]
+HOSTS: Final = [lc7001.aio.Connector.HOST]
 PASSWORD: Final = lc7001.aio.Authenticator.PASSWORD
 parser.add_argument(
     "--password",

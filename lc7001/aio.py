@@ -355,8 +355,11 @@ class Emitter(Consumer, _EventEmitter):
                     self._emit_id += 1
             await self._emit(f"ID:{_id}", message)
         if self.SERVICE in message:
-            _service = message[self.SERVICE]
-            await self._emit(f"{self.SERVICE}:{_service}", message)
+            service = message[self.SERVICE]
+            await self._emit(f"{self.SERVICE}:{service}", message)
+            if self.ZID in message:
+                zid = message[self.ZID]
+                await self._emit(f"{self.SERVICE}:{service}:{zid}", message)
 
     async def handle_send(self, handler: collections.abc.Awaitable, message: dict[str]):
         """Handle the response from the message we will send."""

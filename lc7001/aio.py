@@ -16,8 +16,8 @@ import logging
 import time
 from typing import Final, Mapping
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 _logger: Final = logging.getLogger(__name__)
 

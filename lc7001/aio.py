@@ -253,8 +253,7 @@ class _EventEmitter:
 
         async def _forward(self, *event):
             self.outer().off(self._name, self._forward)
-            if event:
-                await self._handler(*event)
+            await self._handler(*event)
 
         def __init__(self, outer, name: str, handler: collections.abc.Awaitable):
             super().__init__(outer)
@@ -349,7 +348,6 @@ class Emitter(Consumer, _EventEmitter):
             _id = message[self._ID]
             if _id != 0:
                 # emit what we consumed (nothing) until caught up.
-                # such will be squelched in _EventEmitter.Once but give it a chance to turn off.
                 while self._emit_id < _id:
                     await self._emit(f"ID:{self._emit_id}")
                     self._emit_id += 1

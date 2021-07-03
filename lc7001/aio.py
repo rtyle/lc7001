@@ -251,9 +251,12 @@ class _EventEmitter:
     class _Once(_Inner):  # pylint: disable=too-few-public-methods
         """_Once is an _Inner class of _EventEmitter that forwards an emission once."""
 
+        NOTHING: Final = object()  # do not forward an event of NOTHING
+
         async def _forward(self, *event):
             self.outer().off(self._name, self._forward)
-            await self._handler(*event)
+            if len(*event) != 1 or event[0] != self.NOTHING:
+                await self._handler(*event)
 
         def __init__(self, outer, name: str, handler: collections.abc.Awaitable):
             super().__init__(outer)
@@ -347,9 +350,10 @@ class Emitter(Consumer, _EventEmitter):
         if self._ID in message:
             _id = message[self._ID]
             if _id != 0:
-                # emit what we consumed (nothing) until caught up.
+                # emit what we consumed (NOTHING) until caught up.
+                # such will not be forwarded by Once but will allow it to turn off.
                 while self._emit_id < _id:
-                    await self._emit(f"ID:{self._emit_id}")
+                    await self._emit(f"ID:{self._emit_id}", self._Once.NOTHING)
                     self._emit_id += 1
             await self._emit(f"ID:{_id}", message)
         if self.SERVICE in message:

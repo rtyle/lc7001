@@ -6,14 +6,17 @@ This code serves as a demonstration of expected lc7001.aio usage:
 
 There will be some type(s) of Hub(s) to add behavior beyond that of a
 Connector (which is a message Authenticator, Emitter, Consumer and Sender).
-Here, we use Hub which does nothing more than be an Authenticator and then an Emitter
-for each connection/session.
-With DEBUG turned on, the messages passed in (>) to us and out (<) from us are logged.
+Here, we use Hub which does nothing more than be an Authenticator
+and then an Emitter for each connection/session.
+With DEBUG turned on, the messages passed in (>) to us
+and out (<) from us are logged.
 This is a great way to demonstrate the LC7001 behavior.
 
-There will be some type(s) of Interpreter(s) that will need to interact with LC7001 HOSTs.
-Here, our _Interpreter takes lines from STDIN, composes messages from them and sends them to
-(through the current session with) the currently targeted HOST.
+There will be some type(s) of Interpreter(s) that will need to interact
+with LC7001 HOSTs.
+Here, our _Interpreter takes lines from STDIN, composes messages from them
+and sends them to (through the current session with)
+the currently targeted HOST.
 
 The STDIN commands are:
 
@@ -24,11 +27,11 @@ h           -- target the next HOST in rotation (start with first HOST)
 q           -- quit
 
 s           -- send a LIST_SCENES message
-s *         -- send a LIST_SCENES message then a REPORT_SCENE_PROPERTIES for each listed
+s *         -- send a LIST_SCENES then a REPORT_SCENE_PROPERTIES for each
 s SID       -- send a REPORT_SCENE_PROPERTIES message for SID (0-99)
 
 z           -- send a LIST_ZONES message
-z *         -- send a LIST_ZONES message then a REPORT_ZONE_PROPERTIES for each listed
+z *         -- send a LIST_ZONES then a REPORT_ZONE_PROPERTIES for each
 z ZID       -- send a REPORT_ZONE_PROPERTIES message for ZID (0-99)
 z ZID 0|1   -- send a SET_ZONE_PROPERTIES message with POWER as False|True
 z ZID #     -- send a SET_ZONE_PROPERTIES message with POWER_LEVEL as # - 1
@@ -58,7 +61,9 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
         writer_transport, writer_protocol = await loop.connect_write_pipe(
             asyncio.streams.FlowControlMixin, os.fdopen(1, "wb")
         )
-        writer = asyncio.StreamWriter(writer_transport, writer_protocol, None, loop)
+        writer = asyncio.StreamWriter(
+            writer_transport, writer_protocol, None, loop
+        )
         await loop.connect_read_pipe(lambda: reader_protocol, sys.stdin)
         return reader, writer
 
@@ -101,11 +106,15 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
                 try:
                     value = int(next(token))
                 except StopIteration:
-                    await hub.send(hub.compose_report_zone_properties(int(zid)))
+                    await hub.send(
+                        hub.compose_report_zone_properties(int(zid))
+                    )
                 else:
                     if value < 2:
                         await hub.send(
-                            hub.compose_set_zone_properties(int(zid), power=bool(value))
+                            hub.compose_set_zone_properties(
+                                int(zid), power=bool(value)
+                            )
                         )
                     else:
                         await hub.send(

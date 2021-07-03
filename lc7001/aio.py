@@ -14,7 +14,7 @@ import contextlib
 import json
 import logging
 import time
-from typing import Final
+from typing import Final, Mapping
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
@@ -39,7 +39,7 @@ class _Sender:
 
     # SCENE PROPERTY_LIST keys
     DAY_BITS: Final = "DayBits"  # json_integer, DAY_BITS values
-    DELTA: Final = "Delta"  # json_integer, minutes before or after TRIGGER_TIME
+    DELTA: Final = "Delta"  # json_integer, minutes before/after TRIGGER_TIME
     FREQUENCY: Final = "Frequency"  # json_integer, FREQUENCY values
     SKIP: Final = "Skip"  # json_boolean, True to skip next trigger
     TRIGGER_TIME: Final = "TriggerTime"  # json_integer, time_t
@@ -95,7 +95,7 @@ class _Sender:
     TRIGGER_RAMP_COMMAND: Final = "TriggerRampCommand"
     TRIGGER_RAMP_ALL_COMMAND: Final = "TriggerRampAllCommand"
 
-    async def send(self, message: dict[str]):
+    async def send(self, message: Mapping):
         """Send a composed message with the next ID."""
         writer = self._writer
         if writer is None:
@@ -130,7 +130,11 @@ class _Sender:
         return {self.SERVICE: self.REPORT_ZONE_PROPERTIES, self.ZID: zid}
 
     def compose_set_zone_properties(
-        self, zid: int, name: str = None, power: bool = None, power_level: int = None
+        self,
+        zid: int,
+        name: str = None,
+        power: bool = None,
+        power_level: int = None,
     ):
         """Compose a SET_ZONE_PROPERTIES message."""
         property_list = {}
@@ -163,7 +167,7 @@ class _Inner:  # pylint: disable=too-few-public-methods
 
 
 class Consumer(_Sender):
-    """A Consumer (is also a _Sender) whose messages are handled by an abstract consume method."""
+    """A Consumer's messages are handled by an abstract consume method."""
 
     # default constructor values
     READ_TIMEOUT: Final = 20.0  # expect ping every 5 seconds
@@ -176,7 +180,8 @@ class Consumer(_Sender):
 
         Returns (error: bool, code: int = 0, text: str = None)
         where error is True if STATUS is not STATUS_SUCCESS,
-        code is ERROR_CODE value (or 0) and text is ERROR_TEXT value (or None)."""
+        code is ERROR_CODE value (or 0)
+        and text is ERROR_TEXT value (or None)."""
 
         # message keys
         ERROR_TEXT: Final = "ErrorText"
@@ -187,9 +192,10 @@ class Consumer(_Sender):
         STATUS_SUCCESS: Final = "Success"
         STATUS_ERROR: Final = "Error"
 
-        def __init__(self, message: dict[str]):
+        def __init__(self, message: Mapping):
             super().__init__(
-                message.get(self.STATUS, self.STATUS_ERROR) != self.STATUS_SUCCESS,
+                message.get(self.STATUS, self.STATUS_ERROR)
+                != self.STATUS_SUCCESS,
                 int(message.get(self.ERROR_CODE, "0")),
                 message.get(self.ERROR_TEXT, None),
             )
@@ -203,7 +209,7 @@ class Consumer(_Sender):
                 raise self
 
     @abc.abstractmethod
-    async def consume(self, message: dict[str]):
+    async def consume(self, message: Mapping):
         """Consume a message."""
 
     class _Frames(_Inner, collections.abc.AsyncIterator):
@@ -214,7 +220,8 @@ class Consumer(_Sender):
             # return null terminated frame, without the terminator
             return (
                 await asyncio.wait_for(
-                    self.outer()._reader.readuntil(b"\x00"), self.outer()._read_timeout
+                    self.outer()._reader.readuntil(b"\x00"),
+                    self.outer()._read_timeout,
                 )
             )[:-1]
 
@@ -249,7 +256,7 @@ class _EventEmitter:
     """_EventEmitter pattern implementation."""
 
     class _Once(_Inner):  # pylint: disable=too-few-public-methods
-        """_Once is an _Inner class of _EventEmitter that forwards an emission once."""
+        """_Once (_Inner class of _EventEmitter) forwards an emission once."""
 
         NOTHING: Final = object()  # do not forward an event of NOTHING
 
@@ -258,7 +265,9 @@ class _EventEmitter:
             if len(event) != 1 or event[0] is not self.NOTHING:
                 await self._handler(*event)
 
-        def __init__(self, outer, name: str, handler: collections.abc.Awaitable):
+        def __init__(
+            self, outer, name: str, handler: collections.abc.Awaitable
+        ):
             super().__init__(outer)
             self._name = name
             self._handler = handler
@@ -332,7 +341,9 @@ class Emitter(Consumer, _EventEmitter):
     )
     EVENT_SCENE_CREATED: Final = f"{Consumer.SERVICE}:SceneCreated"
     EVENT_SCENE_DELETED: Final = f"{Consumer.SERVICE}:SceneDeleted"
-    EVENT_SCENE_PROPERTIES_CHANGED: Final = f"{Consumer.SERVICE}:ScenePropertiesChanged"
+    EVENT_SCENE_PROPERTIES_CHANGED: Final = (
+        f"{Consumer.SERVICE}:ScenePropertiesChanged"
+    )
     EVENT_SYSTEM_PROPERTIES_CHANGED: Final = (
         f"{Consumer.SERVICE}:SystemPropertiesChanged"
     )
@@ -344,14 +355,16 @@ class Emitter(Consumer, _EventEmitter):
     )
     EVENT_ZONE_ADDED: Final = f"{Consumer.SERVICE}:ZoneAdded"
     EVENT_ZONE_DELETED: Final = f"{Consumer.SERVICE}:ZoneDeleted"
-    EVENT_ZONE_PROPERTIES_CHANGED: Final = f"{Consumer.SERVICE}:ZonePropertiesChanged"
+    EVENT_ZONE_PROPERTIES_CHANGED: Final = (
+        f"{Consumer.SERVICE}:ZonePropertiesChanged"
+    )
 
-    async def consume(self, message: dict[str]):
+    async def consume(self, message: Mapping):
         if self._ID in message:
             _id = message[self._ID]
             if _id != 0:
                 # emit what we consumed (NOTHING) until caught up.
-                # such will not be forwarded by Once but will allow it to turn off.
+                # such will not be forwarded Once but will turn off.
                 while self._emit_id < _id:
                     await self._emit(f"ID:{self._emit_id}", self._Once.NOTHING)
                     self._emit_id += 1
@@ -363,7 +376,9 @@ class Emitter(Consumer, _EventEmitter):
                 zid = message[self.ZID]
                 await self._emit(f"{self.SERVICE}:{service}:{zid}", message)
 
-    async def handle_send(self, handler: collections.abc.Awaitable, message: dict[str]):
+    async def handle_send(
+        self, handler: collections.abc.Awaitable, message: Mapping
+    ):
         """Handle the response from the message we will send."""
         self.once(f"{self._ID}:{self._id + 1}", handler)
         await self.send(message)
@@ -410,7 +425,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
     @staticmethod
     def hash(data: bytes) -> bytes:
-        """Return a hash from data, suitable for turning a password into an encryption key."""
+        """Return a hash of data for turning a password into key."""
         digest = hashes.Hash(hashes.MD5())
         digest.update(data)
         return digest.finalize()
@@ -446,7 +461,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
     async def _consume_security_setkey(self):
         # } terminated json encoding
-        frame = await asyncio.wait_for(self._reader.readuntil(b"}"), self._read_timeout)
+        frame = await asyncio.wait_for(
+            self._reader.readuntil(b"}"), self._read_timeout
+        )
         _logger.debug("\t\t> %s", frame.decode())
         try:
             message = json.loads(frame)
@@ -455,7 +472,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         else:
             self._address = message[self.MAC]
 
-            async def handle(message: dict[str]):
+            async def handle(message: Mapping):
                 try:
                     self.StatusError(message).raise_if()
                 except self.StatusError as error:
@@ -470,7 +487,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     async def _consume_security_hello(self):
         # space terminated challenge phrase
         challenge = (
-            await asyncio.wait_for(self._reader.readuntil(b" "), self._read_timeout)
+            await asyncio.wait_for(
+                self._reader.readuntil(b" "), self._read_timeout
+            )
         )[:-1]
         _logger.debug("\t\t>\t%s", challenge.decode())
         # 12 byte MAC address
@@ -495,14 +514,16 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         try:
             message = json.loads(frame)
             self._consume_security_mac(message)
-        except json.JSONDecodeError as error:
-            # this frame may be concatenated (improperly, for JSON) with another(s?).
+        except json.JSONDecodeError:
+            # may be concatenated (improperly, for JSON) with another(s?).
             # rewrite/retry it as an array of frames
             frames = b"[" + frame.replace(b"}{", b"},{") + b"]"
             try:
                 messages = json.loads(frames)
             except json.JSONDecodeError as error:
-                _logger.warning("except json.JSONDecodeError: %s %s", error, frames)
+                _logger.warning(
+                    "except json.JSONDecodeError: %s %s", error, frames
+                )
             else:
                 mac, *others = messages
                 try:
@@ -564,7 +585,9 @@ class _ConnectionContext(contextlib.AbstractAsyncContextManager):
         self._writer = None
 
     async def __aenter__(self):
-        reader, self._writer = await asyncio.open_connection(self._host, self._port)
+        reader, self._writer = await asyncio.open_connection(
+            self._host, self._port
+        )
         return (reader, self._writer)
 
     async def __aexit__(self, et, ev, tb):
@@ -600,7 +623,8 @@ class Connector(Authenticator):
     async def loop(self):
         """Return the result of the first successful connection/session.
 
-        Raise OSError if (and why) connection could not be made, if loop_timeout < 0.
+        Raise OSError if (and why) connection could not be made,
+        if loop_timeout < 0.
         Otherwise, sleep for up to loop_timeout seconds before trying again."""
         self._task = asyncio.current_task()
         count = 0
@@ -608,13 +632,15 @@ class Connector(Authenticator):
             while True:
                 before = time.monotonic()
                 try:
-                    async with _ConnectionContext(self._host, self._port) as connection:
+                    async with _ConnectionContext(
+                        self._host, self._port
+                    ) as connection:
                         self._reader, self._writer = connection
                         await self._emit(self.EVENT_CONNECTED)
                         # connection success, will be closed with context exit
                         try:
                             return await self.session()
-                        except EOFError as error:
+                        except EOFError:
                             _logger.warning("EOFError")
                         except OSError as error:
                             _logger.warning("OSError %s", error)
@@ -653,7 +679,7 @@ class Connector(Authenticator):
 
 
 class Hub(Connector):
-    """A Hub is a Connector where each session acts as an Authenticator then Emitter."""
+    """Each Hub session acts as an Authenticator then Emitter."""
 
     async def session(self):
         await Authenticator.session(self)

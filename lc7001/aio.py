@@ -99,7 +99,7 @@ class _Sender:
         """Send a composed message with the next ID."""
         writer = self._writer
         if writer is None:
-            _logger.warn("\t! %s", message)
+            _logger.warning("\t! %s", message)
         else:
             _id = self._id + 1
             message[self._ID] = _id
@@ -223,7 +223,7 @@ class Consumer(_Sender):
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
-            _logger.warn("except json.JSONDecodeError: %s %s", error, frame)
+            _logger.warning("except json.JSONDecodeError: %s %s", error, frame)
         else:
             await self.consume(message)
 
@@ -384,8 +384,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     or the MAC address of the unit that we successfully authenticated with.
     """
 
-    # authenticated event emitted with bool result
+    # authenticated events emitted
     EVENT_AUTHENTICATED: Final = "authenticated"
+    EVENT_UNAUTHENTICATED: Final = "unauthenticated"
 
     # default constructor values
     # the Legrand Lighting Control App insists on 8 character minimum passwords
@@ -448,7 +449,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
-            _logger.warn("except json.JSONDecodeError: %s %s", error, frame)
+            _logger.warning("except json.JSONDecodeError: %s %s", error, frame)
         else:
             self._address = message[self.MAC]
 
@@ -499,7 +500,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             try:
                 messages = json.loads(frames)
             except json.JSONDecodeError as error:
-                _logger.warn("except json.JSONDecodeError: %s %s", error, frames)
+                _logger.warning("except json.JSONDecodeError: %s %s", error, frames)
             else:
                 mac, *others = messages
                 try:
@@ -522,6 +523,11 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         else:
             await super().unwrap(frame)
 
+    @property
+    def authenticated(self):
+        """Return True if session successfully authenticated."""
+        return self._authenticated
+
     async def session(self):
         try:
             await super().session()
@@ -529,9 +535,11 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             address = self._address
             self._address = None
             if root.__cause__ is None:
-                await self._emit(self.EVENT_AUTHENTICATED, True)
+                self._authenticated = True
+                await self._emit(self.EVENT_AUTHENTICATED)
                 return address
-            await self._emit(self.EVENT_AUTHENTICATED, False)
+            self._authenticated = False
+            await self._emit(self.EVENT_UNAUTHENTICATED)
             raise root.__cause__ from None
 
     def __init__(
@@ -544,6 +552,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         self._key = key
         super().__init__(read_timeout, reader, writer)
         self._address = None
+        self._authenticated = False
 
 
 class _ConnectionContext(contextlib.AbstractAsyncContextManager):
@@ -567,8 +576,9 @@ class _ConnectionContext(contextlib.AbstractAsyncContextManager):
 class Connector(Authenticator):
     """A Connector is an Authenticator that loops over connections/sessions."""
 
-    # connected event emitted with bool result
+    # connected events emitted
     EVENT_CONNECTED: Final = "connected"
+    EVENT_DISCONNECTED: Final = "disconnected"
 
     # default arguments
     HOST: Final = "LCM1.local."
@@ -579,6 +589,11 @@ class Connector(Authenticator):
         """Cancel the task running loop()."""
         if self._task is not None:
             self._task.cancel()
+
+    @property
+    def connected(self):
+        """Return true if currently connected."""
+        return self._writer is not None
 
     async def loop(self):
         """Return the result of the first successful connection/session.
@@ -593,24 +608,24 @@ class Connector(Authenticator):
                 try:
                     async with _ConnectionContext(self._host, self._port) as connection:
                         self._reader, self._writer = connection
-                        await self._emit(self.EVENT_CONNECTED, True)
+                        await self._emit(self.EVENT_CONNECTED)
                         # connection success, will be closed with context exit
                         try:
                             return await self.session()
                         except EOFError as error:
-                            _logger.warn("EOFError")
+                            _logger.warning("EOFError")
                         except OSError as error:
-                            _logger.warn("OSError %s", error)
+                            _logger.warning("OSError %s", error)
                         except asyncio.TimeoutError:
-                            _logger.warn("asyncio.TimeoutError")
+                            _logger.warning("asyncio.TimeoutError")
                         finally:
                             self._reader, self._writer = None, None
-                            await self._emit(self.EVENT_CONNECTED, False)
+                            await self._emit(self.EVENT_DISCONNECTED, False)
                 except OSError as error:
                     # connection error
                     if self._loop_timeout < 0:
                         raise
-                    _logger.warn("OSError %s", error)
+                    _logger.warning("OSError %s", error)
                 duration = time.monotonic() - before
                 if duration > self._loop_timeout:
                     count = 0

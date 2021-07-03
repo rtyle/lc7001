@@ -99,7 +99,7 @@ class _Sender:
         """Send a composed message with the next ID."""
         writer = self._writer
         if writer is None:
-            _logger.error("\t<!\t%s", message)
+            _logger.error("\t! %s", message)
         else:
             _id = self._id + 1
             message[self._ID] = _id
@@ -107,7 +107,7 @@ class _Sender:
             writer.write(json.dumps(message).encode())
             writer.write(b"\x00")
             await writer.drain()
-            _logger.debug("\t<\t%s", message)
+            _logger.debug("\t< %s", message)
 
     def compose_list_scenes(self):
         """Compose a LIST_SCENES message."""
@@ -230,7 +230,7 @@ class Consumer(_Sender):
     async def session(self):
         """Iterate over read frames forever."""
         async for frame in self._frames:
-            _logger.debug("\t>\t%s", frame.decode())
+            _logger.debug("\t\t> %s", frame.decode())
             await self.unwrap(frame)
 
     def __init__(
@@ -426,7 +426,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         writer = self._writer
         writer.write(message.encode())
         await writer.drain()
-        _logger.debug("\t<\t%s", message)
+        _logger.debug("\t< %s", message)
 
     def _compose_keys(self, old: bytes, new: bytes):
         return {
@@ -441,7 +441,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     async def _consume_security_setkey(self):
         # } terminated json encoding
         frame = await asyncio.wait_for(self._reader.readuntil(b"}"), self._read_timeout)
-        _logger.debug("\t>\t%s", frame.decode())
+        _logger.debug("\t\t> %s", frame.decode())
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
@@ -466,12 +466,12 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         challenge = (
             await asyncio.wait_for(self._reader.readuntil(b" "), self._read_timeout)
         )[:-1]
-        _logger.debug("\t>\t\t%s", challenge.decode())
+        _logger.debug("\t\t>\t%s", challenge.decode())
         # 12 byte MAC address
         self._address = await asyncio.wait_for(
             self._reader.readexactly(12), self._read_timeout
         )
-        _logger.debug("\t>\t\t%s", self._address.decode())
+        _logger.debug("\t\t>\t%s", self._address.decode())
         await self._send_challenge_response(
             self._key, bytes.fromhex(challenge.decode())
         )

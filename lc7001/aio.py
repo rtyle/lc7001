@@ -255,7 +255,7 @@ class _EventEmitter:
 
         async def _forward(self, *event):
             self.outer().off(self._name, self._forward)
-            if len(event) != 1 or event[0] != self.NOTHING:
+            if len(event) != 1 or event[0] is not self.NOTHING:
                 await self._handler(*event)
 
         def __init__(self, outer, name: str, handler: collections.abc.Awaitable):

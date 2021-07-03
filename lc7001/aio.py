@@ -99,7 +99,7 @@ class _Sender:
         """Send a composed message with the next ID."""
         writer = self._writer
         if writer is None:
-            _logger.error("\t! %s", message)
+            _logger.warn("\t! %s", message)
         else:
             _id = self._id + 1
             message[self._ID] = _id
@@ -223,7 +223,7 @@ class Consumer(_Sender):
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
-            _logger.error("except json.JSONDecodeError: %s %s", error, frame)
+            _logger.warn("except json.JSONDecodeError: %s %s", error, frame)
         else:
             await self.consume(message)
 
@@ -384,6 +384,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     or the MAC address of the unit that we successfully authenticated with.
     """
 
+    # authenticated event emitted with bool result
+    EVENT_AUTHENTICATED: Final = "authenticated"
+
     # default constructor values
     # the Legrand Lighting Control App insists on 8 character minimum passwords
     PASSWORD: Final = "........"
@@ -445,7 +448,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
-            _logger.error("except json.JSONDecodeError: %s %s", error, frame)
+            _logger.warn("except json.JSONDecodeError: %s %s", error, frame)
         else:
             self._address = message[self.MAC]
 
@@ -496,7 +499,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             try:
                 messages = json.loads(frames)
             except json.JSONDecodeError as error:
-                _logger.error("except json.JSONDecodeError: %s %s", error, frames)
+                _logger.warn("except json.JSONDecodeError: %s %s", error, frames)
             else:
                 mac, *others = messages
                 try:
@@ -526,7 +529,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             address = self._address
             self._address = None
             if root.__cause__ is None:
+                await self._emit(self.EVENT_AUTHENTICATED, True)
                 return address
+            await self._emit(self.EVENT_AUTHENTICATED, False)
             raise root.__cause__ from None
 
     def __init__(
@@ -562,6 +567,9 @@ class _ConnectionContext(contextlib.AbstractAsyncContextManager):
 class Connector(Authenticator):
     """A Connector is an Authenticator that loops over connections/sessions."""
 
+    # connected event emitted with bool result
+    EVENT_CONNECTED: Final = "connected"
+
     # default arguments
     HOST: Final = "LCM1.local."
     PORT: Final = 2112
@@ -585,22 +593,24 @@ class Connector(Authenticator):
                 try:
                     async with _ConnectionContext(self._host, self._port) as connection:
                         self._reader, self._writer = connection
+                        await self._emit(self.EVENT_CONNECTED, True)
                         # connection success, will be closed with context exit
                         try:
                             return await self.session()
                         except EOFError as error:
-                            _logger.error("EOFError")
+                            _logger.warn("EOFError")
                         except OSError as error:
-                            _logger.error("OSError %s", error)
+                            _logger.warn("OSError %s", error)
                         except asyncio.TimeoutError:
-                            _logger.error("asyncio.TimeoutError")
+                            _logger.warn("asyncio.TimeoutError")
                         finally:
                             self._reader, self._writer = None, None
+                            await self._emit(self.EVENT_CONNECTED, False)
                 except OSError as error:
                     # connection error
                     if self._loop_timeout < 0:
                         raise
-                    _logger.error("OSError %s", error)
+                    _logger.warn("OSError %s", error)
                 duration = time.monotonic() - before
                 if duration > self._loop_timeout:
                     count = 0

@@ -620,7 +620,7 @@ class Connector(Authenticator):
                             _logger.warning("asyncio.TimeoutError")
                         finally:
                             self._reader, self._writer = None, None
-                            await self._emit(self.EVENT_DISCONNECTED, False)
+                            await self._emit(self.EVENT_DISCONNECTED)
                 except OSError as error:
                     # connection error
                     if self._loop_timeout < 0:

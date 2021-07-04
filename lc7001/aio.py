@@ -139,6 +139,7 @@ class _Sender:
         name: str = None,
         power: bool = None,
         power_level: int = None,
+        ramp_rate: int = None,
     ):
         """Compose a SET_ZONE_PROPERTIES message."""
         property_list: dict[str, Any] = {}
@@ -148,6 +149,8 @@ class _Sender:
             property_list[self.POWER] = power
         if power_level is not None:
             property_list[self.POWER_LEVEL] = power_level
+        if ramp_rate is not None:
+            property_list[self.RAMP_RATE] = ramp_rate
         return {
             self.SERVICE: self.SET_ZONE_PROPERTIES,
             self.ZID: zid,

@@ -95,8 +95,8 @@ class _Sender:
     TRIGGER_RAMP_COMMAND: Final = "TriggerRampCommand"
     TRIGGER_RAMP_ALL_COMMAND: Final = "TriggerRampAllCommand"
 
-    def __init__(self, writer: asyncio.StreamWriter):
-        self._writer = writer
+    def __init__(self):
+        self._writer: asyncio.StreamWriter = None
         self._id = 0  # id of last send
 
     async def send(self, message: MutableMapping[str, Any]):
@@ -205,6 +205,12 @@ class Consumer(_Sender):
             if bool(self):
                 raise self
 
+    def __init__(self, read_timeout: float = READ_TIMEOUT):
+        super().__init__()
+        self._reader = None
+        self._read_timeout = read_timeout
+        self._frames = self._Frames(self)
+
     @abc.abstractmethod
     async def consume(self, message: Mapping):
         """Consume a message."""
@@ -236,17 +242,6 @@ class Consumer(_Sender):
         async for frame in self._frames:
             _logger.debug("\t\t> %s", frame.decode())
             await self.unwrap(frame)
-
-    def __init__(
-        self,
-        read_timeout: float = READ_TIMEOUT,
-        reader: asyncio.StreamReader = None,
-        writer: asyncio.StreamWriter = None,
-    ):
-        self._read_timeout = read_timeout
-        self._reader = reader
-        super().__init__(writer)
-        self._frames = self._Frames(self)
 
 
 class _EventEmitter:
@@ -380,13 +375,8 @@ class Emitter(Consumer, _EventEmitter):
         self.once(f"{self._ID}:{self._id + 1}", handler)
         await self.send(message)
 
-    def __init__(
-        self,
-        read_timeout: float = Consumer.READ_TIMEOUT,
-        reader: asyncio.StreamReader = None,
-        writer: asyncio.StreamWriter = None,
-    ):
-        Consumer.__init__(self, read_timeout, reader, writer)
+    def __init__(self, read_timeout: float = Consumer.READ_TIMEOUT):
+        Consumer.__init__(self, read_timeout)
         _EventEmitter.__init__(self)
         self._emit_id = 1  # id of next emit
 
@@ -426,6 +416,16 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
     # SECURITY_MAC and SECURITY_SETKEY key
     MAC: Final = "MAC"
+
+    def __init__(
+        self,
+        key: bytes = KEY,
+        read_timeout: float = Consumer.READ_TIMEOUT,
+    ):
+        super().__init__(read_timeout)
+        self._key: bytes = key
+        self._address = None
+        self._authenticated: bool = False
 
     @staticmethod
     def _encrypt(key: bytes, data: bytes) -> bytes:
@@ -478,7 +478,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
                     raise self._Result()
 
             await self.handle_send(
-                handle, self._compose_keys(self.hash(b""), self._key)
+                handle, self._compose_keys(hash_password(b""), self._key)
             )
 
     async def _consume_security_hello(self):
@@ -562,18 +562,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             await self._emit(self.EVENT_UNAUTHENTICATED)
             raise root.__cause__ from None
 
-    def __init__(
-        self,
-        key: bytes = KEY,
-        read_timeout: float = Consumer.READ_TIMEOUT,
-        reader: asyncio.StreamReader = None,
-        writer: asyncio.StreamWriter = None,
-    ):
-        self._key = key
-        super().__init__(read_timeout, reader, writer)
-        self._address = None
-        self._authenticated = False
-
 
 class _ConnectionContext(contextlib.AbstractAsyncContextManager):
     def __init__(self, host: str, port: int):
@@ -606,6 +594,20 @@ class Connector(Authenticator):
     HOST: Final = "LCM1.local."
     PORT: Final = 2112
     LOOP_TIMEOUT: Final = 2 ** 8
+
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        host: str = HOST,
+        port: int = PORT,
+        loop_timeout: float = LOOP_TIMEOUT,
+        key: bytes = Authenticator.KEY,
+        read_timeout: float = Consumer.READ_TIMEOUT,
+    ):
+        super().__init__(key, read_timeout)
+        self._host = host
+        self._port = port
+        self._loop_timeout = loop_timeout
+        self._task = None
 
     def cancel(self):
         """Cancel the task running loop()."""
@@ -659,20 +661,6 @@ class Connector(Authenticator):
                 await asyncio.sleep(min(2 ** count, self._loop_timeout))
         finally:
             self._task = None
-
-    def __init__(  # pylint: disable=too-many-arguments
-        self,
-        host: str = HOST,
-        port: int = PORT,
-        loop_timeout: float = LOOP_TIMEOUT,
-        key: bytes = Authenticator.KEY,
-        read_timeout: float = Consumer.READ_TIMEOUT,
-    ):
-        self._host = host
-        self._port = port
-        self._loop_timeout = loop_timeout
-        super().__init__(key, read_timeout)
-        self._task = None
 
 
 class Hub(Connector):

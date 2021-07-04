@@ -14,7 +14,7 @@ import contextlib
 import json
 import logging
 import time
-from typing import Final, Mapping
+from typing import Any, Final, Mapping, MutableMapping
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -95,7 +95,11 @@ class _Sender:
     TRIGGER_RAMP_COMMAND: Final = "TriggerRampCommand"
     TRIGGER_RAMP_ALL_COMMAND: Final = "TriggerRampAllCommand"
 
-    async def send(self, message: Mapping):
+    def __init__(self, writer: asyncio.StreamWriter):
+        self._writer = writer
+        self._id = 0  # id of last send
+
+    async def send(self, message: MutableMapping[str, Any]):
         """Send a composed message with the next ID."""
         writer = self._writer
         if writer is None:
@@ -137,7 +141,7 @@ class _Sender:
         power_level: int = None,
     ):
         """Compose a SET_ZONE_PROPERTIES message."""
-        property_list = {}
+        property_list: dict[str, Any] = {}
         if name is not None:
             property_list[self.NAME] = name
         if power is not None:
@@ -149,10 +153,6 @@ class _Sender:
             self.ZID: zid,
             self.PROPERTY_LIST: property_list,
         }
-
-    def __init__(self, writer: asyncio.StreamWriter = None):
-        self._writer = writer
-        self._id = 0  # id of last send
 
 
 class _Inner:  # pylint: disable=too-few-public-methods
@@ -171,9 +171,6 @@ class Consumer(_Sender):
 
     # default constructor values
     READ_TIMEOUT: Final = 20.0  # expect ping every 5 seconds
-
-    # ZONE PROPERTY_LIST keys
-    DEVICE_TYPE: Final = "DeviceType"  # json_string, DIMMER/, consume only
 
     class StatusError(ValueError):
         """StatusError whose args are derived from a message.
@@ -377,7 +374,7 @@ class Emitter(Consumer, _EventEmitter):
                 await self._emit(f"{self.SERVICE}:{service}:{zid}", message)
 
     async def handle_send(
-        self, handler: collections.abc.Awaitable, message: Mapping
+        self, handler: collections.abc.Awaitable, message: MutableMapping
     ):
         """Handle the response from the message we will send."""
         self.once(f"{self._ID}:{self._id + 1}", handler)
@@ -394,6 +391,13 @@ class Emitter(Consumer, _EventEmitter):
         self._emit_id = 1  # id of next emit
 
 
+def hash_password(data: bytes) -> bytes:
+    """Return a hash of data for turning a password into key."""
+    digest = hashes.Hash(hashes.MD5())
+    digest.update(data)
+    return digest.finalize()
+
+
 class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     """An Authenticator session runs for the first/authentication phase only.
 
@@ -408,7 +412,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     # default constructor values
     # the Legrand Lighting Control App insists on 8 character minimum passwords
     PASSWORD: Final = "........"
-    KEY: Final = hash(PASSWORD.encode())
+    KEY: Final = hash_password(PASSWORD.encode())
 
     # Security message prefixes
     SECURITY_MAC: Final = b'{"MAC":'
@@ -422,13 +426,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
     # SECURITY_MAC and SECURITY_SETKEY key
     MAC: Final = "MAC"
-
-    @staticmethod
-    def hash(data: bytes) -> bytes:
-        """Return a hash of data for turning a password into key."""
-        digest = hashes.Hash(hashes.MD5())
-        digest.update(data)
-        return digest.finalize()
 
     @staticmethod
     def _encrypt(key: bytes, data: bytes) -> bytes:

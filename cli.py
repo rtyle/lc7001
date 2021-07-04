@@ -123,7 +123,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
                             )
                         )
 
-    async def _command(self, hub, line: str):
+    async def _command(self, hub, line: bytes):
         token = iter(line.decode().strip().split())
         try:
             command = next(token)
@@ -197,4 +197,4 @@ parser.add_argument(
     help=f"resolves to LC7001 IP address (default {HOSTS[0]})",
 )
 args = parser.parse_args()
-_Main(lc7001.aio.Authenticator.hash(args.password.encode()), *args.hosts)
+_Main(lc7001.aio.hash_password(args.password.encode()), *args.hosts)

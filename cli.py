@@ -33,14 +33,16 @@ s SID       -- send a REPORT_SCENE_PROPERTIES message for SID (0-99)
 z           -- send a LIST_ZONES message
 z *         -- send a LIST_ZONES then a REPORT_ZONE_PROPERTIES for each
 z ZID       -- send a REPORT_ZONE_PROPERTIES message for ZID (0-99)
-z ZID 0|1   -- send a SET_ZONE_PROPERTIES message with POWER as False|True
-z ZID #     -- send a SET_ZONE_PROPERTIES message with POWER_LEVEL as # - 1
+z ZID #     -- send a SET_ZONE_PROPERTIES message with POWER as False|True
+z ZID #%    -- send a SET_ZONE_PROPERTIES message with POWER_LEVEL as #
+z ZID #/    -- send a SET_ZONE_PROPERTIES message with RAMP_RATE as #
 """
 
 import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 from typing import Final, Sequence
 
@@ -103,25 +105,27 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
 
                 await hub.handle_send(handle, hub.compose_list_zones())
             else:
-                try:
-                    value = int(next(token))
-                except StopIteration:
+                kwargs = {}
+                for value in token:
+                    try:
+                        value = int(value)
+                    except ValueError:
+                        match = re.search("^(\\d+)([%/])$", value)
+                        if match:
+                            if match.group(2) == "%":
+                                kwargs["power_level"] = int(match.group(1))
+                            else:
+                                kwargs["ramp_rate"] = int(match.group(1))
+                    else:
+                        kwargs["power"] = bool(value)
+                if len(kwargs) == 0:
                     await hub.send(
                         hub.compose_report_zone_properties(int(zid))
                     )
                 else:
-                    if value < 2:
-                        await hub.send(
-                            hub.compose_set_zone_properties(
-                                int(zid), power=bool(value)
-                            )
-                        )
-                    else:
-                        await hub.send(
-                            hub.compose_set_zone_properties(
-                                int(zid), power_level=value - 1
-                            )
-                        )
+                    await hub.send(
+                        hub.compose_set_zone_properties(int(zid), **kwargs)
+                    )
 
     async def _command(self, hub, line: bytes):
         token = iter(line.decode().strip().split())

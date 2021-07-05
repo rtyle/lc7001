@@ -67,7 +67,7 @@ class _Sender:
     # SCENE PROPERTY_LIST, ZONE_LIST array, item keys (always with ZID)
     LEVEL: Final = "Lvl"  # json_integer, 1-100 (POWER_LEVEL)
     RR: Final = "RR"  # json_integer, 1-100 (RAMP_RATE)
-    ST: Final = "St"  # json_boolean, True/False (state toggle?)
+    ST: Final = "St"  # json_boolean, True/False (POWER state)
 
     # ZONE PROPERTY_LIST keys
     DEVICE_TYPE: Final = "DeviceType"  # json_string, DIMMER/, reported only

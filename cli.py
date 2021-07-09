@@ -5,7 +5,7 @@ Run with --help to see command line usage.
 This code serves as a demonstration of expected lc7001.aio usage:
 
 There will be some type(s) of Hub(s) to add behavior beyond that of a
-Connector (which is a message Authenticator, Emitter, Consumer and Sender).
+Connector (which is a message Authenticator, Emitter, Receiver and Sender).
 Here, we use Hub which does nothing more than be an Authenticator
 and then an Emitter for each connection/session.
 With DEBUG turned on, the messages passed in (>) to us
@@ -78,7 +78,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
             if sid == "*":
 
                 async def handle(message):
-                    lc7001.aio.Consumer.StatusError(message).raise_if()
+                    lc7001.aio.Receiver.StatusError(message).raise_if()
                     for item in message[hub.SCENE_LIST]:
                         await hub.send(
                             hub.compose_report_scene_properties(item[hub.SID])
@@ -97,7 +97,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
             if zid == "*":
 
                 async def handle(message):
-                    lc7001.aio.Consumer.StatusError(message).raise_if()
+                    lc7001.aio.Receiver.StatusError(message).raise_if()
                     for item in message[hub.ZONE_LIST]:
                         await hub.send(
                             hub.compose_report_zone_properties(item[hub.ZID])

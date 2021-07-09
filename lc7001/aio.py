@@ -169,8 +169,8 @@ class _Inner:  # pylint: disable=too-few-public-methods
         return self._outer
 
 
-class Consumer(_Sender):
-    """A Consumer's messages are handled by an abstract consume method."""
+class Receiver(_Sender):
+    """A Receiver's messages are handled by an abstract receive method."""
 
     # default constructor values
     READ_TIMEOUT: Final = 20.0  # expect ping every 5 seconds
@@ -215,8 +215,8 @@ class Consumer(_Sender):
         self._frames = self._Frames(self)
 
     @abc.abstractmethod
-    async def consume(self, message: Mapping):
-        """Consume a message."""
+    async def receive(self, message: Mapping):
+        """Receive a message."""
 
     class _Frames(_Inner, collections.abc.AsyncIterator):
         def __aiter__(self):
@@ -232,13 +232,13 @@ class Consumer(_Sender):
             )[:-1]
 
     async def unwrap(self, frame: bytes):
-        """Unwrap message in frame and consume it."""
+        """Unwrap message in frame and receive it."""
         try:
             message = json.loads(frame)
         except json.JSONDecodeError as error:
             _logger.warning("except json.JSONDecodeError: %s %s", error, frame)
         else:
-            await self.consume(message)
+            await self.receive(message)
 
     async def session(self):
         """Iterate over read frames forever."""
@@ -306,59 +306,59 @@ class _EventEmitter:
         return self
 
 
-class Emitter(Consumer, _EventEmitter):
-    """Emitter is a Consumer and an _EventEmitter of consumed messages."""
+class Emitter(Receiver, _EventEmitter):
+    """Emitter is a Receiver and an _EventEmitter of received messages."""
 
     # events emitted with message
-    EVENT_BROADCAST: Final = f"{Consumer._ID}:0"
-    EVENT_DELETE_ZONE: Final = f"{Consumer.SERVICE}:{Consumer.DELETE_ZONE}"
-    EVENT_LIST_SCENES: Final = f"{Consumer.SERVICE}:{Consumer.LIST_SCENES}"
-    EVENT_LIST_ZONES: Final = f"{Consumer.SERVICE}:{Consumer.LIST_ZONES}"
-    EVENT_PING: Final = f"{Consumer.SERVICE}:ping"
+    EVENT_BROADCAST: Final = f"{Receiver._ID}:0"
+    EVENT_DELETE_ZONE: Final = f"{Receiver.SERVICE}:{Receiver.DELETE_ZONE}"
+    EVENT_LIST_SCENES: Final = f"{Receiver.SERVICE}:{Receiver.LIST_SCENES}"
+    EVENT_LIST_ZONES: Final = f"{Receiver.SERVICE}:{Receiver.LIST_ZONES}"
+    EVENT_PING: Final = f"{Receiver.SERVICE}:ping"
     EVENT_REPORT_SCENE_PROPERTIES: Final = (
-        f"{Consumer.SERVICE}:{Consumer.REPORT_SCENE_PROPERTIES}"
+        f"{Receiver.SERVICE}:{Receiver.REPORT_SCENE_PROPERTIES}"
     )
     EVENT_REPORT_SYSTEM_PROPERTIES: Final = (
-        f"{Consumer.SERVICE}:{Consumer.REPORT_SYSTEM_PROPERTIES}"
+        f"{Receiver.SERVICE}:{Receiver.REPORT_SYSTEM_PROPERTIES}"
     )
     EVENT_REPORT_ZONE_PROPERTIES: Final = (
-        f"{Consumer.SERVICE}:{Consumer.REPORT_ZONE_PROPERTIES}"
+        f"{Receiver.SERVICE}:{Receiver.REPORT_ZONE_PROPERTIES}"
     )
-    EVENT_RUN_SCENE: Final = f"{Consumer.SERVICE}:{Consumer.RUN_SCENE}"
+    EVENT_RUN_SCENE: Final = f"{Receiver.SERVICE}:{Receiver.RUN_SCENE}"
     EVENT_SET_SCENE_PROPERTIES: Final = (
-        f"{Consumer.SERVICE}:{Consumer.SET_SCENE_PROPERTIES}"
+        f"{Receiver.SERVICE}:{Receiver.SET_SCENE_PROPERTIES}"
     )
     EVENT_SET_SYSTEM_PROPERTIES: Final = (
-        f"{Consumer.SERVICE}:{Consumer.SET_SYSTEM_PROPERTIES}"
+        f"{Receiver.SERVICE}:{Receiver.SET_SYSTEM_PROPERTIES}"
     )
     EVENT_SET_ZONE_PROPERTIES: Final = (
-        f"{Consumer.SERVICE}:{Consumer.SET_ZONE_PROPERTIES}"
+        f"{Receiver.SERVICE}:{Receiver.SET_ZONE_PROPERTIES}"
     )
-    EVENT_SCENE_CREATED: Final = f"{Consumer.SERVICE}:SceneCreated"
-    EVENT_SCENE_DELETED: Final = f"{Consumer.SERVICE}:SceneDeleted"
+    EVENT_SCENE_CREATED: Final = f"{Receiver.SERVICE}:SceneCreated"
+    EVENT_SCENE_DELETED: Final = f"{Receiver.SERVICE}:SceneDeleted"
     EVENT_SCENE_PROPERTIES_CHANGED: Final = (
-        f"{Consumer.SERVICE}:ScenePropertiesChanged"
+        f"{Receiver.SERVICE}:ScenePropertiesChanged"
     )
     EVENT_SYSTEM_PROPERTIES_CHANGED: Final = (
-        f"{Consumer.SERVICE}:SystemPropertiesChanged"
+        f"{Receiver.SERVICE}:SystemPropertiesChanged"
     )
     EVENT_TRIGGER_RAMP_COMMAND: Final = (
-        f"{Consumer.SERVICE}:{Consumer.TRIGGER_RAMP_COMMAND}"
+        f"{Receiver.SERVICE}:{Receiver.TRIGGER_RAMP_COMMAND}"
     )
     EVENT_TRIGGER_RAMP_ALL_COMMAND: Final = (
-        f"{Consumer.SERVICE}:{Consumer.TRIGGER_RAMP_ALL_COMMAND}"
+        f"{Receiver.SERVICE}:{Receiver.TRIGGER_RAMP_ALL_COMMAND}"
     )
-    EVENT_ZONE_ADDED: Final = f"{Consumer.SERVICE}:ZoneAdded"
-    EVENT_ZONE_DELETED: Final = f"{Consumer.SERVICE}:ZoneDeleted"
+    EVENT_ZONE_ADDED: Final = f"{Receiver.SERVICE}:ZoneAdded"
+    EVENT_ZONE_DELETED: Final = f"{Receiver.SERVICE}:ZoneDeleted"
     EVENT_ZONE_PROPERTIES_CHANGED: Final = (
-        f"{Consumer.SERVICE}:ZonePropertiesChanged"
+        f"{Receiver.SERVICE}:ZonePropertiesChanged"
     )
 
-    async def consume(self, message: Mapping):
+    async def receive(self, message: Mapping):
         if self._ID in message:
             _id = message[self._ID]
             if _id != 0:
-                # emit what we consumed (NOTHING) until caught up.
+                # emit what we received (NOTHING) until caught up.
                 # such will not be forwarded Once but will turn off.
                 while self._emit_id < _id:
                     await self._emit(f"ID:{self._emit_id}", self._Once.NOTHING)
@@ -378,8 +378,8 @@ class Emitter(Consumer, _EventEmitter):
         self.once(f"{self._ID}:{self._id + 1}", handler)
         await self.send(message)
 
-    def __init__(self, read_timeout: float = Consumer.READ_TIMEOUT):
-        Consumer.__init__(self, read_timeout)
+    def __init__(self, read_timeout: float = Receiver.READ_TIMEOUT):
+        Receiver.__init__(self, read_timeout)
         _EventEmitter.__init__(self)
         self._emit_id = 1  # id of next emit
 
@@ -423,7 +423,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     def __init__(
         self,
         key: bytes = KEY,
-        read_timeout: float = Consumer.READ_TIMEOUT,
+        read_timeout: float = Receiver.READ_TIMEOUT,
     ):
         super().__init__(read_timeout)
         self._key: bytes = key
@@ -459,7 +459,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             },
         }
 
-    async def _consume_security_setkey(self):
+    async def _receive_security_setkey(self):
         # } terminated json encoding
         frame = await asyncio.wait_for(
             self._reader.readuntil(b"}"), self._read_timeout
@@ -484,7 +484,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
                 handle, self._compose_keys(hash_password(b""), self._key)
             )
 
-    async def _consume_security_hello(self):
+    async def _receive_security_hello(self):
         # space terminated challenge phrase
         challenge = (
             await asyncio.wait_for(
@@ -501,19 +501,19 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             self._key, bytes.fromhex(challenge.decode())
         )
 
-    def _consume_security_hello_response(self, success: bool):
+    def _receive_security_hello_response(self, success: bool):
         if success:
             raise self._Result()
         raise self._Result() from self.Error("Invalid")
 
-    def _consume_security_mac(self, message):
+    def _receive_security_mac(self, message):
         self._address = message[self.MAC]
         raise self._Result()
 
     async def _unwrap_security_mac(self, frame):
         try:
             message = json.loads(frame)
-            self._consume_security_mac(message)
+            self._receive_security_mac(message)
         except json.JSONDecodeError:
             # may be concatenated (improperly, for JSON) with another(s?).
             # rewrite/retry it as an array of frames
@@ -527,22 +527,22 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             else:
                 mac, *others = messages
                 try:
-                    self._consume_security_mac(mac)
+                    self._receive_security_mac(mac)
                 finally:
                     for message in others:
-                        await self.consume(message)
+                        await self.receive(message)
 
     async def unwrap(self, frame: bytes):
         if frame.startswith(self.SECURITY_MAC):
             await self._unwrap_security_mac(frame)
         # elif frame.startswith(self.SECURITY_SETKEY):
-        #     await self._consume_security_setkey()
+        #     await self._receive_security_setkey()
         # elif frame.startswith(self.SECURITY_HELLO):
-        #     await self._consume_security_hello()
+        #     await self._receive_security_hello()
         # elif frame.startswith(self.SECURITY_HELLO_OK):
-        #     await self._consume_security_hello_response(True)
+        #     await self._receive_security_hello_response(True)
         # elif frame.startswith(self.SECURITY_HELLO_INVALID):
-        #     self._consume_security_hello_response(False)
+        #     self._receive_security_hello_response(False)
         else:
             await super().unwrap(frame)
 
@@ -604,7 +604,7 @@ class Connector(Authenticator):
         port: int = PORT,
         loop_timeout: float = LOOP_TIMEOUT,
         key: bytes = Authenticator.KEY,
-        read_timeout: float = Consumer.READ_TIMEOUT,
+        read_timeout: float = Receiver.READ_TIMEOUT,
     ):
         super().__init__(key, read_timeout)
         self._host = host

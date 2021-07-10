@@ -385,7 +385,7 @@ class Emitter(Receiver, _EventEmitter):
 
 
 def hash_password(data: bytes) -> bytes:
-    """Return a hash of data for turning a password into key."""
+    """Return a hash of data for turning a password into a key."""
     digest = hashes.Hash(hashes.MD5())
     digest.update(data)
     return digest.finalize()
@@ -492,17 +492,18 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         )[:-1]
         _logger.debug("\t\t>\t%s", challenge.decode())
         # 12 byte MAC address
-        self._address = await asyncio.wait_for(
+        self._address = (await asyncio.wait_for(
             self._reader.readexactly(12), self._read_timeout
-        )
-        _logger.debug("\t\t>\t%s", self._address.decode())
+        )).decode()
+        _logger.debug("\t\t>\t%s", self._address)
         await self._send_challenge_response(
             self._key, bytes.fromhex(challenge.decode())
         )
 
-    def _receive_security_hello_response(self, success: bool):
-        if success:
-            raise self._Result()
+    def _receive_security_hello_ok(self):
+        raise self._Result()
+
+    def _receive_security_hello_invalid(self):
         raise self._Result() from self.Error("Invalid")
 
     def _receive_security_mac(self, message):
@@ -539,9 +540,9 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         elif frame.startswith(self.SECURITY_HELLO):
             await self._receive_security_hello()
         elif frame.startswith(self.SECURITY_HELLO_OK):
-            await self._receive_security_hello_response(True)
+            await self._receive_security_hello_ok()
         elif frame.startswith(self.SECURITY_HELLO_INVALID):
-            self._receive_security_hello_response(False)
+            self._receive_security_hello_invalid()
         else:
             await super().unwrap(frame)
 

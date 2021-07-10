@@ -402,11 +402,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     EVENT_AUTHENTICATED: Final = "authenticated"
     EVENT_UNAUTHENTICATED: Final = "unauthenticated"
 
-    # default constructor values
-    # the Legrand Lighting Control App insists on 8 character minimum passwords
-    PASSWORD: Final = "........"
-    KEY: Final = hash_password(PASSWORD.encode())
-
     # Security message prefixes
     SECURITY_MAC: Final = b'{"MAC":'
     SECURITY_HELLO: Final = b"Hello V1 "
@@ -422,7 +417,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
 
     def __init__(
         self,
-        key: bytes = KEY,
+        key: bytes = None,
         read_timeout: float = Receiver.READ_TIMEOUT,
     ):
         super().__init__(read_timeout)
@@ -443,6 +438,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         """Chained from an Error if there was one."""
 
     async def _send_challenge_response(self, key: bytes, challenge: bytes):
+        if key is None:
+            raise self._Result() from self.Error("authentication required")
         message = self._encrypt(key, challenge).hex()
         writer = self._writer
         writer.write(message.encode())
@@ -480,6 +477,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
                 else:
                     raise self._Result()
 
+            if self._key is None:
+                raise self._Result() from self.Error("authentication required")
             await self.handle_send(
                 handle, self._compose_keys(hash_password(b""), self._key)
             )
@@ -603,7 +602,7 @@ class Connector(Authenticator):
         host: str = HOST,
         port: int = PORT,
         loop_timeout: float = LOOP_TIMEOUT,
-        key: bytes = Authenticator.KEY,
+        key: bytes = None,
         read_timeout: float = Receiver.READ_TIMEOUT,
     ):
         super().__init__(key, read_timeout)

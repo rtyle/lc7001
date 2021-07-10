@@ -182,14 +182,12 @@ parser = argparse.ArgumentParser(
     description="Command Line Interpreter to interact with LC7001 HOSTs"
 )
 HOSTS: Final = [lc7001.aio.Connector.HOST]
-PASSWORD: Final = lc7001.aio.Authenticator.PASSWORD
 parser.add_argument(
     "--password",
     metavar="PASSWORD",
     type=str,
-    default=PASSWORD,
-    help=f"""password for each HOST (default {PASSWORD}
-    minimum 8 characters for Legrand Lighting Control App compatibility)""",
+    help="""password for each HOST
+    (minimum 8 characters for Legrand Lighting Control App compatibility)""",
 )
 parser.add_argument(
     "hosts",
@@ -200,4 +198,8 @@ parser.add_argument(
     help=f"resolves to LC7001 IP address (default {HOSTS[0]})",
 )
 args = parser.parse_args()
-_Main(lc7001.aio.hash_password(args.password.encode()), *args.hosts)
+if args.password is None:
+    KEY = None
+else:
+    KEY = lc7001.aio.hash_password(args.password.encode())
+_Main(KEY, *args.hosts)

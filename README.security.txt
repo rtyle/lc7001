@@ -2,7 +2,7 @@ https://static.developer.legrand.com/files/2021/03/LC7001-AU7000-Security-Addend
 
 5.1.2 [SETKEY] Prompt
 
-	# connection opened, consume
+	# connection opened, receive
 
 		00000000  5b 53 45 54 4b 45 59 5d  00                        [SETKEY] .
 		00000009  7b 22 4d 41 43 22 3a 22  30 30 32 36 45 43 30 32   {"MAC":" 0026EC02
@@ -26,7 +26,7 @@ https://static.developer.legrand.com/files/2021/03/LC7001-AU7000-Security-Addend
 
 5.1.3 "Hello" Challenge
 
-	# connection opened, consume
+	# connection opened, receive
 
 		00000000  48 65 6c 6c 6f 20 56 31  20 00                     Hello V1  .
 		0000000A  36 43 31 42 46 37 31 39  42 41 37 38 39 37 36 33   6C1BF719 BA789763
@@ -38,7 +38,7 @@ https://static.developer.legrand.com/files/2021/03/LC7001-AU7000-Security-Addend
 		00000000  65 35 33 37 36 65 66 62  62 65 34 36 65 62 64 31   e5376efb be46ebd1
 		00000010  30 66 39 61 36 31 66 30  30 30 61 31 32 39 35 38   0f9a61f0 00a12958
 
-	# consume either ...
+	# receive either ...
 
 		00000037  5b 4f 4b 5d 0a 0d 0a 00                            [OK].... 
 

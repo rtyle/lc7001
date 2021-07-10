@@ -187,7 +187,6 @@ parser.add_argument(
     "--password",
     metavar="PASSWORD",
     type=str,
-    nargs=1,
     default=PASSWORD,
     help=f"""password for each HOST (default {PASSWORD}
     minimum 8 characters for Legrand Lighting Control App compatibility)""",

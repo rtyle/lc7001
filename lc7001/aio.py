@@ -133,7 +133,7 @@ class _Sender:
         """Compose a REPORT_ZONE_PROPERTIES message."""
         return {self.SERVICE: self.REPORT_ZONE_PROPERTIES, self.ZID: zid}
 
-    def compose_set_zone_properties(
+    def compose_set_zone_properties(  # pylint: disable=too-many-arguments
         self,
         zid: int,
         name: str = None,
@@ -394,7 +394,7 @@ def hash_password(data: bytes) -> bytes:
 class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     """An Authenticator session runs for the first/authentication phase only.
 
-    This phase will either end by exception (Authentication.Error)
+    This phase will either end by exception (Authenticator.Error)
     or the MAC address of the unit that we successfully authenticated with.
     """
 
@@ -535,14 +535,14 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     async def unwrap(self, frame: bytes):
         if frame.startswith(self.SECURITY_MAC):
             await self._unwrap_security_mac(frame)
-        # elif frame.startswith(self.SECURITY_SETKEY):
-        #     await self._receive_security_setkey()
-        # elif frame.startswith(self.SECURITY_HELLO):
-        #     await self._receive_security_hello()
-        # elif frame.startswith(self.SECURITY_HELLO_OK):
-        #     await self._receive_security_hello_response(True)
-        # elif frame.startswith(self.SECURITY_HELLO_INVALID):
-        #     self._receive_security_hello_response(False)
+        elif frame.startswith(self.SECURITY_SETKEY):
+            await self._receive_security_setkey()
+        elif frame.startswith(self.SECURITY_HELLO):
+            await self._receive_security_hello()
+        elif frame.startswith(self.SECURITY_HELLO_OK):
+            await self._receive_security_hello_response(True)
+        elif frame.startswith(self.SECURITY_HELLO_INVALID):
+            self._receive_security_hello_response(False)
         else:
             await super().unwrap(frame)
 

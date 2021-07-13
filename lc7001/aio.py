@@ -95,6 +95,27 @@ class _Sender:
     TRIGGER_RAMP_COMMAND: Final = "TriggerRampCommand"
     TRIGGER_RAMP_ALL_COMMAND: Final = "TriggerRampAllCommand"
 
+    # SET_SYSTEM_PROPERTIES PROPERTY_LIST keys
+    ADD_A_LIGHT: Final = "AddALight"  # json_boolean, True to enable
+    ADD_A_SCENE_CONTROLLER: Final = (
+        "AddASceneController"  # json_boolean, True to enable
+    )
+    TIME_ZONE: Final = "TimeZone"  # json_integer, seconds offset from GMT
+    EFFECTIVE_TIME_ZONE: Final = "EffectiveTimeZone"  # json_integer, seconds offset from GMT including DST
+    DAYLIGHT_SAVING_TIME: Final = (
+        "DaylightSavingTime"  # json_boolean, True for DST
+    )
+    LOCATION_INFO: Final = "LocationInfo"  # json_string, LOCATION description
+    LOCATION: Final = "Location"  # json_object, LAT and LONG
+    CONFIGURED: Final = (
+        "Configured"  # json_boolean, True to say LCM configured
+    )
+    LAT: Final = "Lat"  # json_object, latitude in DEG, MIN, SEC
+    LONG: Final = "Long"  # json_object longitude in DEG, MIN, SEC
+    DEG: Final = "Deg"  # json_integer, degrees
+    MIN: Final = "Min"  # json_integer, minutes
+    SEC: Final = "Sec"  # json_integer, seconds
+
     def __init__(self):
         self._writer: asyncio.StreamWriter = None
         self._id = 0  # id of last send
@@ -112,6 +133,14 @@ class _Sender:
             writer.write(b"\x00")
             await writer.drain()
             _logger.debug("\t< %s", message)
+
+    def compose_delete_scene(self, sid: int):
+        """Compose a DELETE_SCENE message."""
+        return {self.SERVICE: self.DELETE_SCENE, self.SID: sid}
+
+    def compose_delete_zone(self, zid: int):
+        """Compose a DELETE_ZONE message."""
+        return {self.SERVICE: self.DELETE_ZONE, self.ZID: zid}
 
     def compose_list_scenes(self):
         """Compose a LIST_SCENES message."""
@@ -154,6 +183,40 @@ class _Sender:
         return {
             self.SERVICE: self.SET_ZONE_PROPERTIES,
             self.ZID: zid,
+            self.PROPERTY_LIST: property_list,
+        }
+
+    def compose_set_system_properties(
+        self,
+        add_a_light: bool = None,
+        add_a_scene_controller: bool = None,
+        time_zone: int = None,
+        effective_time_zone: int = None,
+        daylight_saving_time: bool = None,
+        location_info: str = None,
+        location: Mapping = None,
+        configured: bool = None,
+    ):
+        """Compose a SET_SYSTEM_PROPERTIES message."""
+        property_list: dict[str, Any] = {}
+        if add_a_light is not None:
+            property_list[self.ADD_A_LIGHT] = add_a_light
+        if add_a_scene_controller is not None:
+            property_list[self.ADD_A_SCENE_CONTROLLER] = add_a_scene_controller
+        if time_zone is not None:
+            property_list[self.TIME_ZONE] = time_zone
+        if effective_time_zone is not None:
+            property_list[self.EFFECTIVE_TIME_ZONE] = effective_time_zone
+        if daylight_saving_time is not None:
+            property_list[self.DAYLIGHT_SAVING_TIME] = daylight_saving_time
+        if location_info is not None:
+            property_list[self.LOCATION_INFO] = location_info
+        if location is not None:
+            property_list[self.LOCATION] = location
+        if configured is not None:
+            property_list[self.CONFIGURED] = configured
+        return {
+            self.SERVICE: self.SET_SYSTEM_PROPERTIES,
             self.PROPERTY_LIST: property_list,
         }
 
@@ -409,7 +472,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     SECURITY_HELLO_OK: Final = b"[OK]"
     SECURITY_SETKEY: Final = b"[SETKEY]"
 
-    # SYSTEM PROPERTY_LIST keys
+    # SET_SYSTEM_PROPERTIES PROPERTY_LIST security keys
     KEYS: Final = "Keys"
 
     # SECURITY_MAC and SECURITY_SETKEY key
@@ -446,7 +509,8 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         await writer.drain()
         _logger.debug("\t< %s", message)
 
-    def _compose_keys(self, old: bytes, new: bytes):
+    def compose_keys(self, old: bytes, new: bytes):
+        """Compose a message to change key from old to new."""
         return {
             self.SERVICE: self.SET_SYSTEM_PROPERTIES,
             self.PROPERTY_LIST: {
@@ -480,7 +544,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             if self._key is None:
                 raise self._Result() from self.Error("authentication required")
             await self.handle_send(
-                handle, self._compose_keys(hash_password(b""), self._key)
+                handle, self.compose_keys(hash_password(b""), self._key)
             )
 
     async def _receive_security_hello(self):
@@ -492,9 +556,11 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         )[:-1]
         _logger.debug("\t\t>\t%s", challenge.decode())
         # 12 byte MAC address
-        self._address = (await asyncio.wait_for(
-            self._reader.readexactly(12), self._read_timeout
-        )).decode()
+        self._address = (
+            await asyncio.wait_for(
+                self._reader.readexactly(12), self._read_timeout
+            )
+        ).decode()
         _logger.debug("\t\t>\t%s", self._address)
         await self._send_challenge_response(
             self._key, bytes.fromhex(challenge.decode())
@@ -612,10 +678,14 @@ class Connector(Authenticator):
         self._loop_timeout = loop_timeout
         self._task = None
 
-    def cancel(self):
+    async def cancel(self):
         """Cancel the task running loop()."""
         if self._task is not None:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
 
     @property
     def connected(self):

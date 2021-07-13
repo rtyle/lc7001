@@ -22,6 +22,10 @@ The STDIN commands are:
 
             -- a blank line sends a REPORT_SYSTEM_PROPERTIES message
 
+a #         -- send a SET_SYSTEM_PROPERTIES message with ADD_A_LIGHT True|False
+
+dz #        -- send a DELETE_ZONE message for ZID #
+
 h           -- target the next HOST in rotation (start with first HOST)
 
 q           -- quit
@@ -134,7 +138,22 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
         except StopIteration:
             await hub.send(hub.compose_report_system_properties())
         else:
-            if command.startswith("h"):
+            if command.startswith("a"):
+                try:
+                    enable = bool(next(token))
+                except StopIteration:
+                    enable = True
+                await hub.send(
+                    hub.compose_set_system_properties(add_a_light=enable)
+                )
+            if command.startswith("dz"):
+                try:
+                    zid = int(next(token))
+                except StopIteration:
+                    pass
+                else:
+                    await hub.send(hub.compose_delete_zone(zid))
+            elif command.startswith("h"):
                 self._host += 1
                 self._host %= len(self._hosts)
                 _logger.info("host %s", self._hosts[self._host])
@@ -150,7 +169,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
             line = await reader.readline()
             if len(line) == 0 or line.startswith(b"q"):
                 for hub in self._hubs:
-                    hub.cancel()
+                    await hub.cancel()
                 raise asyncio.CancelledError
             await self._command(self._hubs[self._host], line)
 

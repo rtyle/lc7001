@@ -97,9 +97,6 @@ class _Sender:
 
     # SET_SYSTEM_PROPERTIES PROPERTY_LIST keys
     ADD_A_LIGHT: Final = "AddALight"  # json_boolean, True to enable
-    ADD_A_SCENE_CONTROLLER: Final = (
-        "AddASceneController"  # json_boolean, True to enable
-    )
     TIME_ZONE: Final = "TimeZone"  # json_integer, seconds offset from GMT
     EFFECTIVE_TIME_ZONE: Final = "EffectiveTimeZone"  # json_integer, seconds offset from GMT including DST
     DAYLIGHT_SAVING_TIME: Final = (
@@ -201,8 +198,6 @@ class _Sender:
         property_list: dict[str, Any] = {}
         if add_a_light is not None:
             property_list[self.ADD_A_LIGHT] = add_a_light
-        if add_a_scene_controller is not None:
-            property_list[self.ADD_A_SCENE_CONTROLLER] = add_a_scene_controller
         if time_zone is not None:
             property_list[self.TIME_ZONE] = time_zone
         if effective_time_zone is not None:

@@ -186,7 +186,6 @@ class _Sender:
     def compose_set_system_properties(
         self,
         add_a_light: bool = None,
-        add_a_scene_controller: bool = None,
         time_zone: int = None,
         effective_time_zone: int = None,
         daylight_saving_time: bool = None,
@@ -268,7 +267,7 @@ class Receiver(_Sender):
 
     def __init__(self, read_timeout: float = READ_TIMEOUT):
         super().__init__()
-        self._reader = None
+        self._reader: asyncio.StreamReader = None
         self._read_timeout = read_timeout
         self._frames = self._Frames(self)
 
@@ -417,7 +416,7 @@ class Emitter(Receiver, _EventEmitter):
             _id = message[self._ID]
             if _id != 0:
                 # emit what we received (NOTHING) until caught up.
-                # such will not be forwarded Once but will turn off.
+                # such will be acknowledged but not forwarded by Once.
                 while self._emit_id < _id:
                     await self._emit(f"ID:{self._emit_id}", self._Once.NOTHING)
                     self._emit_id += 1
@@ -655,7 +654,7 @@ class Connector(Authenticator):
     EVENT_DISCONNECTED: Final = "disconnected"
 
     # default arguments
-    HOST: Final = "LCM1.local."
+    HOST: Final = "LCM1.local"
     PORT: Final = 2112
     LOOP_TIMEOUT: Final = 2 ** 8
 

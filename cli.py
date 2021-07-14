@@ -24,7 +24,7 @@ The STDIN commands are:
 
 a #         -- send a SET_SYSTEM_PROPERTIES message with ADD_A_LIGHT True|False
 
-dz #        -- send a DELETE_ZONE message for ZID #
+d #         -- send a DELETE_ZONE message for ZID #
 
 h           -- target the next HOST in rotation (start with first HOST)
 
@@ -146,7 +146,7 @@ class _Interpreter:  # pylint: disable=too-few-public-methods
                 await hub.send(
                     hub.compose_set_system_properties(add_a_light=enable)
                 )
-            if command.startswith("dz"):
+            if command.startswith("d"):
                 try:
                     zid = int(next(token))
                 except StopIteration:

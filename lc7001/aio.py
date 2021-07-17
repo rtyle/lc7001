@@ -121,14 +121,9 @@ class Composer:
     MIN: Final = "Min"  # json_integer, minutes
     SEC: Final = "Sec"  # json_integer, seconds
 
-    def __init__(self):
-        self._id = 0  # id of last wrap
-
-    def wrap(self, message: MutableMapping[str, Any]) -> bytes:
-        """Wrap a composed message, with the next ID, in a frame."""
-        _id = self._id + 1
+    def wrap(self, _id, message: MutableMapping[str, Any]) -> bytes:
+        """Wrap a composed message, with _id, in a frame."""
         message[self._ID] = _id
-        self._id = _id
         return json.dumps(message).encode() + b"\x00"
 
     def compose_delete_scene(self, sid: int):
@@ -234,7 +229,7 @@ class Composer:
 
 class _Sender(Composer):
     def __init__(self):
-        super().__init__()
+        self._id = 0  # id of last send
         self._writer: asyncio.StreamWriter = None
 
     async def send(self, message: MutableMapping[str, Any]):
@@ -243,7 +238,8 @@ class _Sender(Composer):
         if writer is None:
             _logger.warning("\t! %s", message)
         else:
-            writer.write(self.wrap(message))
+            self._id += 1
+            writer.write(self.wrap(self._id, message))
             await writer.drain()
             _logger.debug("\t< %s", message)
 

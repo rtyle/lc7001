@@ -22,7 +22,15 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 _logger: Final = logging.getLogger(__name__)
 
 
-class _Sender:
+def hash_password(data: bytes) -> bytes:
+    """Return a hash of data for turning a password into a key."""
+    digest = hashes.Hash(hashes.MD5())
+    digest.update(data)
+    return digest.finalize()
+
+
+class Composer:
+    """Composer of messages."""
 
     # message keys
     APP_CONTEXT_ID: Final = "AppContextId"  # echoed in reply
@@ -114,22 +122,14 @@ class _Sender:
     SEC: Final = "Sec"  # json_integer, seconds
 
     def __init__(self):
-        self._writer: asyncio.StreamWriter = None
-        self._id = 0  # id of last send
+        self._id = 0  # id of last wrap
 
-    async def send(self, message: MutableMapping[str, Any]):
-        """Send a composed message with the next ID."""
-        writer = self._writer
-        if writer is None:
-            _logger.warning("\t! %s", message)
-        else:
-            _id = self._id + 1
-            message[self._ID] = _id
-            self._id = _id
-            writer.write(json.dumps(message).encode())
-            writer.write(b"\x00")
-            await writer.drain()
-            _logger.debug("\t< %s", message)
+    def wrap(self, message: MutableMapping[str, Any]) -> bytes:
+        """Wrap a composed message, with the next ID, in a frame."""
+        _id = self._id + 1
+        message[self._ID] = _id
+        self._id = _id
+        return json.dumps(message).encode() + b"\x00"
 
     def compose_delete_scene(self, sid: int):
         """Compose a DELETE_SCENE message."""
@@ -213,6 +213,39 @@ class _Sender:
             self.SERVICE: self.SET_SYSTEM_PROPERTIES,
             self.PROPERTY_LIST: property_list,
         }
+
+    @staticmethod
+    def _encrypt(key: bytes, data: bytes) -> bytes:
+        cipher = Cipher(algorithms.AES(key), modes.ECB())
+        encryptor = cipher.encryptor()
+        return encryptor.update(data) + encryptor.finalize()
+
+    def compose_keys(self, old: bytes, new: bytes):
+        """Compose a message to change key from old to new."""
+        return {
+            self.SERVICE: self.SET_SYSTEM_PROPERTIES,
+            self.PROPERTY_LIST: {
+                self.KEYS: "".join(
+                    [self._encrypt(old, key).hex() for key in (old, new)]
+                )
+            },
+        }
+
+
+class _Sender(Composer):
+    def __init__(self):
+        super().__init__()
+        self._writer: asyncio.StreamWriter = None
+
+    async def send(self, message: MutableMapping[str, Any]):
+        """Send a composed message with the next ID."""
+        writer = self._writer
+        if writer is None:
+            _logger.warning("\t! %s", message)
+        else:
+            writer.write(self.wrap(message))
+            await writer.drain()
+            _logger.debug("\t< %s", message)
 
 
 class _Inner:  # pylint: disable=too-few-public-methods
@@ -441,13 +474,6 @@ class Emitter(Receiver, _EventEmitter):
         self._emit_id = 1  # id of next emit
 
 
-def hash_password(data: bytes) -> bytes:
-    """Return a hash of data for turning a password into a key."""
-    digest = hashes.Hash(hashes.MD5())
-    digest.update(data)
-    return digest.finalize()
-
-
 class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     """An Authenticator session runs for the first/authentication phase only.
 
@@ -482,12 +508,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         self._address = None
         self._authenticated: bool = False
 
-    @staticmethod
-    def _encrypt(key: bytes, data: bytes) -> bytes:
-        cipher = Cipher(algorithms.AES(key), modes.ECB())
-        encryptor = cipher.encryptor()
-        return encryptor.update(data) + encryptor.finalize()
-
     class Error(ValueError):
         """Authentication error."""
 
@@ -502,17 +522,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
         writer.write(message.encode())
         await writer.drain()
         _logger.debug("\t< %s", message)
-
-    def compose_keys(self, old: bytes, new: bytes):
-        """Compose a message to change key from old to new."""
-        return {
-            self.SERVICE: self.SET_SYSTEM_PROPERTIES,
-            self.PROPERTY_LIST: {
-                self.KEYS: "".join(
-                    [self._encrypt(old, key).hex() for key in (old, new)]
-                )
-            },
-        }
 
     async def _receive_security_setkey(self):
         # } terminated json encoding

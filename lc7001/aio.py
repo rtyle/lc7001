@@ -121,6 +121,9 @@ class Composer:
     MIN: Final = "Min"  # json_integer, minutes
     SEC: Final = "Sec"  # json_integer, seconds
 
+    # SET_SYSTEM_PROPERTIES PROPERTY_LIST security keys
+    KEYS: Final = "Keys"
+
     def wrap(self, _id, message: MutableMapping[str, Any]) -> bytes:
         """Wrap a composed message, with _id, in a frame."""
         message[self._ID] = _id
@@ -487,9 +490,6 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
     SECURITY_HELLO_INVALID: Final = b"[INVALID]"
     SECURITY_HELLO_OK: Final = b"[OK]"
     SECURITY_SETKEY: Final = b"[SETKEY]"
-
-    # SET_SYSTEM_PROPERTIES PROPERTY_LIST security keys
-    KEYS: Final = "Keys"
 
     # SECURITY_MAC and SECURITY_SETKEY key
     MAC: Final = "MAC"

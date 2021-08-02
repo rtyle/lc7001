@@ -677,6 +677,9 @@ class Connector(Authenticator):
         self._loop_timeout = loop_timeout
         self._task = None
 
+    def host(self):
+        return self._host
+
     async def cancel(self):
         """Cancel the task running loop()."""
         if self._task is not None:

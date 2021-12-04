@@ -697,21 +697,21 @@ class Connector(Authenticator):
     async def loop(self):
         """Return the result of the first successful connection/session.
 
-        Raise OSError if (and why) connection could not be made,
-        if loop_timeout < 0.
-        Otherwise, sleep for up to loop_timeout seconds before trying again."""
+        If loop_timeout < 0, raise OSError if (and why) connection could not be made;
+        otherwise, reconnect after exponential backoff (up to loop_timeout seconds)
+        before trying again."""
         self._task = asyncio.current_task()
         count = 0
         try:
             while True:
-                before = time.monotonic()
                 try:
                     async with _ConnectionContext(
                         self._host, self._port
                     ) as connection:
+                        # connection success, will be closed with context exit
+                        count = 0
                         self._reader, self._writer = connection
                         await self._emit(self.EVENT_CONNECTED)
-                        # connection success, will be closed with context exit
                         try:
                             return await self.session()
                         except EOFError:
@@ -728,12 +728,9 @@ class Connector(Authenticator):
                     if self._loop_timeout < 0:
                         raise
                     _logger.warning("OSError %s", error)
-                duration = time.monotonic() - before
-                if duration > self._loop_timeout:
-                    count = 0
-                else:
+                    # reconnect after exponential backoff
+                    await asyncio.sleep(min(2 ** count, self._loop_timeout))
                     count += 1
-                await asyncio.sleep(min(2 ** count, self._loop_timeout))
         finally:
             self._task = None
 

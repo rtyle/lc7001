@@ -624,7 +624,7 @@ class Authenticator(Emitter):  # pylint: disable=too-few-public-methods
             self._address = None
             if root.__cause__ is None:
                 self._authenticated = True
-                await self._emit(self.EVENT_AUTHENTICATED)
+                await self._emit(self.EVENT_AUTHENTICATED, address)
                 return address
             self._authenticated = False
             await self._emit(self.EVENT_UNAUTHENTICATED)
